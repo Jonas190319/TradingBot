@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Sequence
 
 from committee import PortfolioCommittee
 from models import AnalystView, CommitteeDecision, MarketSnapshot, Regime, TradeCandidate
+from portfolio_allocator import AllocationPlan, OpenExposure, PortfolioAllocator
 from pretrade import PreTradeRecorder
 from risk_manager import PortfolioState, RiskApproval, RiskManager
 from strategists import CORE_STRATEGISTS
@@ -19,7 +20,7 @@ class CandidateResult:
 
 
 class ExpertTeamOrchestrator:
-    """Coordinates strategists, committee, pre-trade recording and risk.
+    """Coordinates strategists, committee, pre-trade recording, risk and allocation.
 
     It does not send broker orders. Execution stays a separate boundary so the
     decision system can be tested in replay, shadow and demo modes unchanged.
@@ -30,6 +31,7 @@ class ExpertTeamOrchestrator:
         self.pretrade = PreTradeRecorder()
         self.committee = PortfolioCommittee()
         self.risk = RiskManager()
+        self.allocator = PortfolioAllocator()
 
     def evaluate_market(
         self,
@@ -98,3 +100,17 @@ class ExpertTeamOrchestrator:
             )
 
         return sorted(results, key=lambda r: r.committee.score, reverse=True)
+
+    def allocate_portfolio(
+        self,
+        candidate_results: Iterable[CandidateResult],
+        open_exposures: Sequence[OpenExposure] = (),
+    ) -> AllocationPlan:
+        """Select only the best fundable candidates after individual risk approval.
+
+        Hard defaults: max five concurrent positions, max 1.5% aggregate open risk,
+        max five Opening Range positions and concentration checks by risk factor.
+        Candidates that do not make the funded set remain observable/shadow rather
+        than displacing an already-open trade.
+        """
+        return self.allocator.allocate(list(candidate_results), open_exposures)
