@@ -46,21 +46,23 @@ def verify_account(settings):
         for value in (
             getattr(account, "company", ""),
             getattr(account, "server", ""),
-            settings.mt5_account_label,
         )
     ).lower()
-    if settings.expected_broker.lower() not in broker_text:
+    if not settings.expected_broker.strip() or settings.expected_broker.lower() not in broker_text:
         raise RuntimeError(
             f"Broker safety check failed: expected {settings.expected_broker!r}, "
             f"connected server={account.server!r}, company={getattr(account, 'company', '')!r}"
         )
 
-    if settings.require_demo_account:
-        demo_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
-        if getattr(account, "trade_mode", None) != demo_mode:
-            raise RuntimeError(
-                "Demo safety check failed. Refusing to run against a non-demo MT5 account."
-            )
+    if account.login != settings.mt5_login or account.server != settings.mt5_server:
+        raise RuntimeError("Connected MT5 account does not match configured login/server")
+
+    # This milestone always requires demo, regardless of environment overrides.
+    demo_mode = getattr(mt5, "ACCOUNT_TRADE_MODE_DEMO", 0)
+    if getattr(account, "trade_mode", None) != demo_mode:
+        raise RuntimeError(
+            "Demo safety check failed. Refusing to run against a non-demo MT5 account."
+        )
 
     return account
 
@@ -132,6 +134,7 @@ def main() -> None:
         print("Execution remains disabled in this bridge; telemetry only.")
 
         while True:
+            verify_account(settings)
             for logical_name, broker_symbol in universe.items():
                 publish_tick(sb, logical_name, broker_symbol)
             time.sleep(settings.telemetry_interval_seconds)
