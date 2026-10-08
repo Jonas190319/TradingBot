@@ -1,5 +1,7 @@
 from pydantic import BaseModel
 import os
+from pathlib import Path
+from dotenv import load_dotenv
 
 
 class Settings(BaseModel):
@@ -23,6 +25,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def load_settings() -> Settings:
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env", override=False)
     return Settings(
         supabase_url=os.environ["SUPABASE_URL"],
         supabase_service_role_key=os.environ["SUPABASE_SERVICE_ROLE_KEY"],
