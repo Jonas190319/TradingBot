@@ -14,7 +14,7 @@ if (-not (Test-Path '.venv\Scripts\python.exe')) {
     py -3.12 -m venv .venv
     if ($LASTEXITCODE -ne 0) { throw 'Virtual environment creation failed.' }
 }
-& .\.venv\Scripts\python.exe -m pip install -r services/mt5-engine/requirements.txt pytest
+& .\.venv\Scripts\python.exe -m pip install -r services/mt5-engine/requirements-windows.lock pytest==9.1.1
 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 & .\.venv\Scripts\python.exe -m pip check
 if ($LASTEXITCODE -ne 0) { throw 'Dependency conflict.' }
