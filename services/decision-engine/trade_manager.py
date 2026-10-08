@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from models import ManagementAction, Regime, TradeState
+from .models import ManagementAction, Regime, TradeState
 
 
 class TradeManager:

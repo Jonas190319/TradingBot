@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'Dependency conflict.' }
 & .\.venv\Scripts\python.exe -c "import MetaTrader5,supabase,dotenv,pydantic; print('MT5 Python:',MetaTrader5.__version__); print('Dependency imports OK')"
 if ($LASTEXITCODE -ne 0) { throw 'Dependency import failed.' }
-& .\.venv\Scripts\python.exe -m pytest services/agent_team services/decision-engine services/mt5-engine/test_safety.py -q
+& .\.venv\Scripts\python.exe -m pytest services/agent_team services/decision-engine services/mt5-engine -q
 if ($LASTEXITCODE -ne 0) { throw 'Safety/core tests failed.' }
 if (-not (Test-Path '.env')) { Copy-Item '.env.example' '.env' }
 Write-Host 'Setup checks complete. Configure .env locally; never share passwords or service keys in chat.'

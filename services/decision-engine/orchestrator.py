@@ -3,12 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence
 
-from committee import PortfolioCommittee
-from models import AnalystView, CommitteeDecision, MarketSnapshot, Regime, TradeCandidate
-from portfolio_allocator import AllocationPlan, OpenExposure, PortfolioAllocator
-from pretrade import PreTradeRecorder
-from risk_manager import PortfolioState, RiskApproval, RiskManager
-from strategists import CORE_STRATEGISTS
+from .committee import PortfolioCommittee
+from .models import AnalystView, CommitteeDecision, MarketSnapshot, Regime, TradeCandidate
+from .portfolio_allocator import AllocationPlan, OpenExposure, PortfolioAllocator
+from .pretrade import PreTradeRecorder
+from .risk_manager import PortfolioState, RiskApproval, RiskManager
+from .strategists import CORE_STRATEGISTS
 
 
 @dataclass

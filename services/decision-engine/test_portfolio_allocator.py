@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from portfolio_allocator import OpenExposure, PortfolioAllocator
+from services.decision_engine.portfolio_allocator import OpenExposure, PortfolioAllocator
 
 
 @dataclass

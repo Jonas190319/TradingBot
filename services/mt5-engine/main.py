@@ -1,11 +1,19 @@
 import time
+import argparse
+import sys
 from datetime import datetime, timezone
+from math import isfinite
+from pathlib import Path
 from typing import Dict, Iterable, Optional
 
 import MetaTrader5 as mt5
 from supabase import create_client
 
 from config import load_settings
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from market_features import bars_from_rates
+from shadow_runtime import ShadowRuntime
 
 # Logical market names used by the decision engine -> Pepperstone/MT5 aliases.
 # We resolve aliases at startup so broker naming differences do not leak into agents.
@@ -95,17 +103,25 @@ def resolve_universe() -> Dict[str, str]:
     return resolved
 
 
-def publish_tick(sb, logical_name: str, broker_symbol: str) -> None:
+def publish_tick(sb, logical_name: str, broker_symbol: str, max_age=60):
     info = mt5.symbol_info(broker_symbol)
     tick = mt5.symbol_info_tick(broker_symbol)
     if info is None or tick is None:
-        return
+        return None
+
+    values = (float(tick.bid), float(tick.ask), float(info.point))
+    if not all(isfinite(x) and x > 0 for x in values) or tick.ask < tick.bid:
+        return None
+    now = datetime.now(timezone.utc)
+    ts = datetime.fromtimestamp(getattr(tick, 'time_msc', 0)/1000 or tick.time, timezone.utc)
+    if not 0 <= (now-ts).total_seconds() <= max_age:
+        return None
 
     point = info.point or 0
     spread_points = ((tick.ask - tick.bid) / point) if point else None
     sb.table("market_context").insert(
         {
-            "ts": utc_now(),
+            "ts": ts.isoformat(),
             "symbol": logical_name,
             "bid": tick.bid,
             "ask": tick.ask,
@@ -114,9 +130,10 @@ def publish_tick(sb, logical_name: str, broker_symbol: str) -> None:
             "source": f"pepperstone-mt5-demo:{broker_symbol}",
         }
     ).execute()
+    return ts, float(tick.bid), float(tick.ask), float(info.point)
 
 
-def main() -> None:
+def main(once=False) -> None:
     settings = load_settings()
     sb = create_client(settings.supabase_url, settings.supabase_service_role_key)
     initialize_mt5(settings)
@@ -124,6 +141,9 @@ def main() -> None:
     try:
         account = verify_account(settings)
         universe = resolve_universe()
+        runtime = ShadowRuntime(sb, f'{account.server}:{account.login}') if settings.shadow_analysis_enabled else None
+        if runtime:
+            runtime.restore_tracking()
 
         print(
             "Connected safely to Pepperstone MT5 Demo "
@@ -131,16 +151,60 @@ def main() -> None:
             f"balance={account.balance:.2f} {account.currency}"
         )
         print(f"Resolved symbols: {universe}")
-        print("Execution remains disabled in this bridge; telemetry only.")
+        print('Execution remains disabled. SHADOW analysis=' + ('ON' if runtime else 'OFF'))
+        print('News/calendar feed missing; funding veto active; no automatic orders.')
+        last_history_check = {}
+        heartbeat = 0
 
         while True:
-            verify_account(settings)
+            account = verify_account(settings)
+            positions = mt5.positions_get()
+            fresh = 0
+            failed = 0
+            analysed = 0
             for logical_name, broker_symbol in universe.items():
-                publish_tick(sb, logical_name, broker_symbol)
+                try:
+                    quote = publish_tick(sb, logical_name, broker_symbol, settings.max_tick_age_seconds)
+                    if quote is None:
+                        continue
+                    fresh += 1
+                    ts, bid, ask, point = quote
+                    if runtime:
+                        runtime.observe(logical_name, ts, bid, ask)
+                        checked = last_history_check.get(logical_name, 0)
+                        if time.monotonic()-checked < 30:
+                            continue
+                        last_history_check[logical_name] = time.monotonic()
+                        now = datetime.now(timezone.utc)
+                        rates = mt5.copy_rates_from_pos(broker_symbol, mt5.TIMEFRAME_M5, 1, 600)
+                        bars = bars_from_rates(rates, now)
+                        if not bars:
+                            raise ValueError('MT5 returned no closed M5 history')
+                        result = runtime.evaluate(logical_name, now, bid, ask, point, bars, account,
+                                                  len(positions) if positions is not None else -1)
+                        if result:
+                            analysed += 1
+                            print(f"SHADOW {logical_name}: {result['signals']} agents; {result['candidates']} candidates; regime={result['regime']}; orders=0", flush=True)
+                except ValueError as exc:
+                    failed += 1
+                    print(f'{logical_name}: analysis skipped: {exc}', flush=True)
+                except Exception as exc:
+                    failed += 1
+                    # Do not print client configuration, passwords or request headers.
+                    print(f'{logical_name}: persistence/analysis error {type(exc).__name__}; retrying; orders=0', flush=True)
+            if time.monotonic()-heartbeat >= 60:
+                print(f'Heartbeat {utc_now()}: fresh_quotes={fresh}/{len(universe)}, orders=0', flush=True)
+                heartbeat = time.monotonic()
+            if once:
+                if failed or not fresh or (runtime and not analysed):
+                    raise RuntimeError('One-cycle diagnostic incomplete; check per-symbol messages. No orders sent.')
+                break
             time.sleep(settings.telemetry_interval_seconds)
     finally:
         mt5.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description='Pepperstone demo telemetry and SHADOW agents; no orders')
+    parser.add_argument('--once', action='store_true', help='Run one collection/analysis cycle and exit')
+    main(once=parser.parse_args().once)

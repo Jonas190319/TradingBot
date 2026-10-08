@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
 
-from models import AnalystView, CommitteeDecision, Decision, Direction, Regime, TradeCandidate
+from .models import AnalystView, CommitteeDecision, Decision, Direction, Regime, TradeCandidate
 
 
 DEFAULT_REGIME_WEIGHTS: Dict[Regime, Dict[str, float]] = {

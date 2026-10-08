@@ -12,6 +12,10 @@ class NewsAgent:
         self.event_mode = EventMode()
 
     def analyze(self, context: AgentContext) -> AgentSignal:
+        if context.market.extra.get('news_feed_connected') is False:
+            return AgentSignal(utcnow(), context.market.symbol, self.name, Direction.NO_TRADE, 100, 100,
+                               'Missing news feed', 'News risk cannot be checked without a configured feed.',
+                               {'feed_status': 'not_configured'})
         event = self.event_mode.assess(context.market, context.economic_events)
         if event.active:
             return AgentSignal(

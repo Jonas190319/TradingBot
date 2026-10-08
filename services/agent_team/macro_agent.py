@@ -10,6 +10,10 @@ class MacroAgent:
     name = "macro"
 
     def analyze(self, context: AgentContext) -> AgentSignal:
+        if context.market.extra.get('macro_feed_connected') is False:
+            return AgentSignal(utcnow(), context.market.symbol, self.name, Direction.NO_TRADE, 100, 100,
+                               'Missing economic calendar feed', 'Scheduled event risk cannot be checked.',
+                               {'feed_status': 'not_configured'})
         now = context.market.ts
         relevant = []
         for e in context.economic_events:

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Deque, Dict, Iterable, List
 
-from models import MarketSnapshot
+from .models import MarketSnapshot
 
 
 @dataclass
