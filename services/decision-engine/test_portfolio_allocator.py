@@ -45,7 +45,8 @@ def test_selects_only_best_five():
         make("f", "GBPUSD", 80),
     ]
     plan = allocator.allocate(candidates)
-    assert len(plan.selected) == 4  # 4 x .35 = 1.40%; fifth would exceed 1.50%
+    assert len(plan.selected) == 5  # Fifth candidate receives only remaining 0.10% risk.
+    assert abs(plan.decisions[4].funded_risk_pct - 0.10) < 1e-9
     assert plan.total_risk_pct <= 1.50
 
 
