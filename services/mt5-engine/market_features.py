@@ -5,6 +5,7 @@ from statistics import mean
 from zoneinfo import ZoneInfo
 
 from services.agent_team.models import Bar
+from broker_clock import timestamp_utc
 
 BAR_SECONDS = 300
 MIN_BARS = 60
@@ -21,12 +22,12 @@ def clip(value):
     return max(0.0, min(100.0, float(value)))
 
 
-def bars_from_rates(rates, now):
+def bars_from_rates(rates, now, time_mode='utc'):
     if rates is None:
         return ()
     rows = []
     for rate in rates:
-        ts = datetime.fromtimestamp(int(rate['time']), timezone.utc)
+        ts = timestamp_utc(rate['time'], time_mode)
         if ts + timedelta(seconds=BAR_SECONDS) > now:
             continue  # Never feed a forming bar to the decision stack.
         values = [float(rate[k]) for k in ('open', 'high', 'low', 'close')]

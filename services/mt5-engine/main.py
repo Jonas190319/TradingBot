@@ -13,6 +13,7 @@ from config import load_settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from market_features import bars_from_rates
+from broker_clock import timestamp_utc, closed_history_mode
 from shadow_runtime import ShadowRuntime
 
 # Logical market names used by the decision engine -> Pepperstone/MT5 aliases.
@@ -103,7 +104,7 @@ def resolve_universe() -> Dict[str, str]:
     return resolved
 
 
-def publish_tick(sb, logical_name: str, broker_symbol: str, max_age=60):
+def publish_tick(sb, logical_name: str, broker_symbol: str, max_age=60, time_mode='utc'):
     info = mt5.symbol_info(broker_symbol)
     tick = mt5.symbol_info_tick(broker_symbol)
     if info is None or tick is None:
@@ -113,8 +114,10 @@ def publish_tick(sb, logical_name: str, broker_symbol: str, max_age=60):
     if not all(isfinite(x) and x > 0 for x in values) or tick.ask < tick.bid:
         return None
     now = datetime.now(timezone.utc)
-    ts = datetime.fromtimestamp(getattr(tick, 'time_msc', 0)/1000 or tick.time, timezone.utc)
-    if not 0 <= (now-ts).total_seconds() <= max_age:
+    raw_seconds = getattr(tick, 'time_msc', 0)/1000 or tick.time
+    ts = timestamp_utc(raw_seconds, time_mode)
+    # Permit only two seconds of clock jitter, never an hourly future timestamp.
+    if not -2 <= (now-ts).total_seconds() <= max_age:
         return None
 
     point = info.point or 0
@@ -128,6 +131,8 @@ def publish_tick(sb, logical_name: str, broker_symbol: str, max_age=60):
             "spread_points": spread_points,
             "regime": "unknown",
             "source": f"pepperstone-mt5-demo:{broker_symbol}",
+            "technical_context": {'raw_mt5_time_seconds': raw_seconds,
+                                  'timestamp_mode': time_mode, 'timestamp_normalized': True},
         }
     ).execute()
     return ts, float(tick.bid), float(tick.ask), float(info.point)
@@ -151,6 +156,7 @@ def main(once=False) -> None:
             f"balance={account.balance:.2f} {account.currency}"
         )
         print(f"Resolved symbols: {universe}")
+        print(f'Timestamp modes: ticks={settings.mt5_tick_time_mode}; bars={settings.mt5_bar_time_mode}; stored timestamps=UTC')
         print('Execution remains disabled. SHADOW analysis=' + ('ON' if runtime else 'OFF'))
         print('News/calendar feed missing; funding veto active; no automatic orders.')
         last_history_check = {}
@@ -164,7 +170,8 @@ def main(once=False) -> None:
             analysed = 0
             for logical_name, broker_symbol in universe.items():
                 try:
-                    quote = publish_tick(sb, logical_name, broker_symbol, settings.max_tick_age_seconds)
+                    quote = publish_tick(sb, logical_name, broker_symbol, settings.max_tick_age_seconds,
+                                         settings.mt5_tick_time_mode)
                     if quote is None:
                         continue
                     fresh += 1
@@ -177,14 +184,15 @@ def main(once=False) -> None:
                         last_history_check[logical_name] = time.monotonic()
                         now = datetime.now(timezone.utc)
                         rates = mt5.copy_rates_from_pos(broker_symbol, mt5.TIMEFRAME_M5, 1, 600)
-                        bars = bars_from_rates(rates, now)
+                        bar_mode = closed_history_mode(rates, now, settings.mt5_bar_time_mode)
+                        bars = bars_from_rates(rates, now, bar_mode)
                         if not bars:
                             raise ValueError('MT5 returned no closed M5 history')
                         result = runtime.evaluate(logical_name, now, bid, ask, point, bars, account,
                                                   len(positions) if positions is not None else -1)
                         if result:
                             analysed += 1
-                            print(f"SHADOW {logical_name}: {result['signals']} agents; {result['candidates']} candidates; regime={result['regime']}; orders=0", flush=True)
+                            print(f"SHADOW {logical_name}: {result['signals']} agents; {result['candidates']} candidates; regime={result['regime']}; bar_time={bar_mode}; orders=0", flush=True)
                 except ValueError as exc:
                     failed += 1
                     print(f'{logical_name}: analysis skipped: {exc}', flush=True)

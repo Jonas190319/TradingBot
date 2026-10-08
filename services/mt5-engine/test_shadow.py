@@ -222,15 +222,21 @@ def load_bridge(monkeypatch):
     return module,fake_mt5
 
 
-def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys):
+@pytest.mark.parametrize('tick_mode,bar_mode', [('utc','utc'),('pepperstone_server','utc'),('pepperstone_server','pepperstone_server')])
+def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys,tick_mode,bar_mode):
     bridge,mt5=load_bridge(monkeypatch)
     now=datetime.now(timezone.utc)
     now=now.replace(minute=(now.minute//5)*5,second=0,microsecond=0)
     rates=[dict(time=b.ts.timestamp(),open=b.open,high=b.high,low=b.low,close=b.close,tick_volume=b.volume) for b in bars(now)]
+    from zoneinfo import ZoneInfo
+    offset=(timedelta(hours=7)+now.astimezone(ZoneInfo('America/New_York')).utcoffset()).total_seconds()
+    if bar_mode=='pepperstone_server':
+        for row in rates: row['time']+=offset
     db=Database()
     settings=SimpleNamespace(supabase_url='https://example.supabase.co',supabase_service_role_key='not-a-key',
                              mt5_terminal_path='mock',mt5_login=123,mt5_password='local',mt5_server='Pepperstone-Demo',
-                             expected_broker='Pepperstone',shadow_analysis_enabled=True,max_tick_age_seconds=60,telemetry_interval_seconds=2)
+                             expected_broker='Pepperstone',shadow_analysis_enabled=True,max_tick_age_seconds=60,telemetry_interval_seconds=2,
+                             mt5_tick_time_mode=tick_mode, mt5_bar_time_mode='auto')
     account=SimpleNamespace(company='Pepperstone',server=settings.mt5_server,login=123,trade_mode=0,
                             balance=5000,equity=5000,currency='EUR')
     monkeypatch.setattr(bridge,'load_settings',lambda:settings)
@@ -239,7 +245,7 @@ def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys):
     mt5.initialize=lambda **kwargs:True
     mt5.account_info=lambda:account
     mt5.symbol_info=lambda symbol:SimpleNamespace(visible=True,point=.01)
-    mt5.symbol_info_tick=lambda symbol:SimpleNamespace(bid=106,ask=106.02,time_msc=datetime.now(timezone.utc).timestamp()*1000)
+    mt5.symbol_info_tick=lambda symbol:SimpleNamespace(bid=106,ask=106.02,time_msc=(datetime.now(timezone.utc).timestamp()+(offset if tick_mode=='pepperstone_server' else 0))*1000)
     mt5.positions_get=lambda:()
     mt5.copy_rates_from_pos=lambda *args:rates
     shutdown=[]; mt5.shutdown=lambda:shutdown.append(True)

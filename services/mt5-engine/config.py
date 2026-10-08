@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+from typing import Literal
 
 
 class Settings(BaseModel):
@@ -18,6 +19,8 @@ class Settings(BaseModel):
     telemetry_interval_seconds: int = Field(default=5, ge=1, le=60)
     shadow_analysis_enabled: bool = True
     max_tick_age_seconds: int = Field(default=60, ge=1, le=300)
+    mt5_tick_time_mode: Literal['utc', 'pepperstone_server'] = 'pepperstone_server'
+    mt5_bar_time_mode: Literal['auto', 'utc', 'pepperstone_server'] = 'auto'
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -42,4 +45,6 @@ def load_settings() -> Settings:
         telemetry_interval_seconds=int(os.getenv("TELEMETRY_INTERVAL_SECONDS", "5")),
         shadow_analysis_enabled=_env_bool('SHADOW_ANALYSIS_ENABLED', True),
         max_tick_age_seconds=int(os.getenv('MAX_TICK_AGE_SECONDS', '60')),
+        mt5_tick_time_mode=os.getenv('MT5_TICK_TIME_MODE', 'pepperstone_server'),
+        mt5_bar_time_mode=os.getenv('MT5_BAR_TIME_MODE', 'auto'),
     )

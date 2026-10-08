@@ -35,6 +35,14 @@ After a successful diagnostic, start continuous observation:
 .\.venv\Scripts\python.exe .\services\mt5-engine\main.py
 ```
 
+### Timestamp basis
+
+The observed PepperstoneUK-Demo terminal returns tick timestamp values approximately three hours ahead of a verified Windows UTC clock in October. `MT5_TICK_TIME_MODE=pepperstone_server` is therefore the bridge default for this installation. The conversion follows Pepperstone's documented GMT+3 during US DST / GMT+2 otherwise, using New York timezone rules rather than a fixed subtraction or European DST. `MT5_TICK_TIME_MODE=utc` remains available for feeds whose values already represent UTC. Do not change modes simply to make stale quotes pass.
+
+Bars are checked independently: `MT5_BAR_TIME_MODE=auto` selects between UTC and Pepperstone server-wall encoding only when exactly one conversion gives a latest returned bar age between zero and ten minutes. This check happens before filtering future/forming bars. It does not estimate arbitrary clock offsets. An indeterminate/stale history is rejected. Explicit `utc`/`pepperstone_server` bar modes are also available. DST-ambiguous/nonexistent server-wall labels fail closed.
+
+Persisted timestamps are UTC; market telemetry records the original tick value and conversion mode in `technical_context`. Quotes still expire after the configured maximum age (60 seconds by default); only two seconds of future clock jitter are tolerated. This is not a bypass for an incorrect system clock. Existing `.env` files need no change to use the new defaults.
+
 Expect `SHADOW ... 9 agents ... orders=0` lines on newly closed M5 bars and a heartbeat every minute. Candidate count may be zero when no setup qualifies. Use Ctrl+C to stop. `SHADOW_ANALYSIS_ENABLED=false` leaves quote telemetry only; neither setting enables orders.
 
 ## Database setup
