@@ -223,7 +223,7 @@ def load_bridge(monkeypatch):
 
 
 @pytest.mark.parametrize('tick_mode,bar_mode', [('utc','utc'),('pepperstone_server','utc'),('pepperstone_server','pepperstone_server')])
-def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys,tick_mode,bar_mode):
+def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys,tmp_path,tick_mode,bar_mode):
     bridge,mt5=load_bridge(monkeypatch)
     now=datetime.now(timezone.utc)
     now=now.replace(minute=(now.minute//5)*5,second=0,microsecond=0)
@@ -244,6 +244,7 @@ def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys,tic
     monkeypatch.setattr(bridge,'SYMBOL_ALIASES',{'EURUSD':('EURUSD',)})
     mt5.initialize=lambda **kwargs:True
     mt5.account_info=lambda:account
+    mt5.terminal_info=lambda:SimpleNamespace(data_path=str(tmp_path))
     mt5.symbol_info=lambda symbol:SimpleNamespace(visible=True,point=.01)
     mt5.symbol_info_tick=lambda symbol:SimpleNamespace(bid=106,ask=106.02,time_msc=(datetime.now(timezone.utc).timestamp()+(offset if tick_mode=='pepperstone_server' else 0))*1000)
     mt5.positions_get=lambda:()
@@ -252,6 +253,11 @@ def test_one_cycle_end_to_end_with_mocked_mt5_and_storage(monkeypatch,capsys,tic
     bridge.main(once=True)
     assert shutdown==[True]
     assert len(db.rows['market_context'])==1 and len(db.rows['agent_signals'])==9
+    import csv
+    with (tmp_path/'MQL5/Files/TradingBotShadow/EURUSD.csv').open(encoding='utf-8',newline='') as f:
+        frame=list(csv.reader(f,delimiter=';'))
+    assert len([r for r in frame if r[0]=='AGENT'])==9
+    assert frame[-1]==['END',str(len(frame)-1)]
     assert 'orders=0' in capsys.readouterr().out
 
 

@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from market_features import bars_from_rates
 from broker_clock import timestamp_utc, closed_history_mode
 from shadow_runtime import ShadowRuntime
+from chart_export import ChartExporter
 
 # Logical market names used by the decision engine -> Pepperstone/MT5 aliases.
 # We resolve aliases at startup so broker naming differences do not leak into agents.
@@ -149,6 +150,16 @@ def main(once=False) -> None:
         runtime = ShadowRuntime(sb, f'{account.server}:{account.login}') if settings.shadow_analysis_enabled else None
         if runtime:
             runtime.restore_tracking()
+        chart = None
+        terminal = mt5.terminal_info() if hasattr(mt5, 'terminal_info') else None
+        data_path = getattr(terminal, 'data_path', None)
+        if data_path:
+            try:
+                chart = ChartExporter(data_path, f'{account.server}:{account.login}', universe)
+                print(f'Chart feed: {chart.folder}', flush=True)
+            except OSError:
+                print('Chart feed unavailable; analysis continues without chart export.', flush=True)
+        chart_write_warning = False
 
         print(
             "Connected safely to Pepperstone MT5 Demo "
@@ -169,10 +180,13 @@ def main(once=False) -> None:
             failed = 0
             analysed = 0
             for logical_name, broker_symbol in universe.items():
+                quote = None
+                chart_status = 'observing; orders disabled'
                 try:
                     quote = publish_tick(sb, logical_name, broker_symbol, settings.max_tick_age_seconds,
                                          settings.mt5_tick_time_mode)
                     if quote is None:
+                        chart_status = 'no fresh quote; orders disabled'
                         continue
                     fresh += 1
                     ts, bid, ask, point = quote
@@ -194,12 +208,22 @@ def main(once=False) -> None:
                             analysed += 1
                             print(f"SHADOW {logical_name}: {result['signals']} agents; {result['candidates']} candidates; regime={result['regime']}; bar_time={bar_mode}; orders=0", flush=True)
                 except ValueError as exc:
+                    chart_status = f'analysis skipped: {exc}'
                     failed += 1
                     print(f'{logical_name}: analysis skipped: {exc}', flush=True)
                 except Exception as exc:
+                    chart_status = f'analysis/storage error: {type(exc).__name__}'
                     failed += 1
                     # Do not print client configuration, passwords or request headers.
                     print(f'{logical_name}: persistence/analysis error {type(exc).__name__}; retrying; orders=0', flush=True)
+                finally:
+                    if chart:
+                        try:
+                            chart.write(logical_name, runtime, datetime.now(timezone.utc), quote, chart_status)
+                        except Exception:
+                            if not chart_write_warning:
+                                print('Chart export temporarily unavailable; analysis continues.', flush=True)
+                                chart_write_warning = True
             if time.monotonic()-heartbeat >= 60:
                 print(f'Heartbeat {utc_now()}: fresh_quotes={fresh}/{len(universe)}, orders=0', flush=True)
                 heartbeat = time.monotonic()

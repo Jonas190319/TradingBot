@@ -41,6 +41,7 @@ class ShadowRuntime:
         self.history = []
         self.active = {}
         self.retired = deque(maxlen=5000)
+        self.latest = {}
 
     def evaluate(self, symbol, now, bid, ask, point, bars, account, open_positions):
         if self.completed.get(symbol) == bars[-1].ts:
@@ -135,6 +136,7 @@ class ShadowRuntime:
                 setup_score=c.setup_score, metadata=jsonable(tracking)), on_conflict='candidate_id').execute()
             self.active[key] = tracking
         self.completed[symbol] = bars[-1].ts
+        self.latest[symbol] = dict(ts=now.isoformat(), regime=raw_regime, signals=jsonable(rows))
         return dict(evaluation_id=evaluation_id, candidates=len(candidates), signals=len(signals), regime=raw_regime)
 
     def restore_tracking(self):

@@ -63,3 +63,22 @@ For a fresh project, apply the core schema first, then `supabase/learning_schema
 Offline tests cover demo account safety, vetoes, all four strategies in both directions, closed-bar/stale-data guards, timezone changes, retry-safe persistence, restart recovery, sampled exits and a complete simulated MT5-to-storage cycle. Actual Windows/MT5 end-to-end validation requires running the diagnostic on the target machine.
 
 Any future execution path requires separate implementation and explicit user approval. Promotion remains research/replay → shadow → approved demo validation → explicit live approval. No martingale, grid rescue, averaging down, stop widening or automatic strategy promotion.
+
+## Read-only MT5 chart monitor
+
+`mt5/Indicators/TradingBotShadow.mq5` is a custom indicator for the existing SHADOW bridge. It shows nine agent reports with direction/confidence/risk, regime, feed/quote/analysis age, warning status and up to four active virtual candidates. Blue Entry, red SL and green TP1/TP2 lines are drawn only while the quote is fresh. The sampled current R value is hypothetical; a visible candidate is never an executed broker position. The indicator contains no order functions, DLL imports or network requests. Algo Trading can remain off.
+
+Stop the Python bridge with Ctrl+C, update the same branch, then:
+
+```powershell
+git pull --ff-only
+.\scripts\Setup-Windows.ps1
+.\.venv\Scripts\python.exe .\services\mt5-engine\install_chart.py
+.\.venv\Scripts\python.exe .\services\mt5-engine\main.py
+```
+
+The installer verifies the configured Pepperstone demo account, copies the source into that terminal's actual data folder under `MQL5/Indicators/TradingBot`, and attempts compilation with its `metaeditor64.exe`. It reports whether a new `.ex5` was produced. If compilation is not confirmed, read the reported log or open the installed `.mq5` in MetaEditor and press F7. Compilation and visual rendering must be verified on Windows; offline Python tests do not compile MQL5.
+
+In MT5, open the desired symbol's M5 chart. Show Navigator with Ctrl+N, right-click Indicators and Refresh, then drag **TradingBot > TradingBotShadow** onto the chart. Add one instance per chart. Select `StrategyFilter` to focus on one strategy when lines overlap, or `all` for all active virtual candidates. `ShowLevels=false` keeps just the status panel.
+
+The bridge writes a small credential-free CSV snapshot per broker symbol into `MQL5/Files/TradingBotShadow`. Writes use atomic replacement and an END record. The indicator checks a complete frame, symbol, demo account and freshness before rendering. A stopped feed is marked stale after 30 seconds, and its levels disappear. Missing/stale quotes also suppress levels. After removing the indicator, only its own prefixed objects are deleted. Chart export failures do not stop market analysis. Charts with no candidates show the status panel without fabricated price levels.
