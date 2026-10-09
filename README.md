@@ -1,72 +1,84 @@
 # Trading Bot
 
-Decision core for a Trive / MetaTrader 5 trading system.
+Pepperstone MetaTrader 5 demo market data, nine expert roles and four strategy modules with Supabase persistence. The Windows bridge runs in **SHADOW mode only** and contains no broker order API.
 
-## Current state
-The **expert-team decision layer is implemented and broker-agnostic**. MT5, news feeds and live execution are intentionally connected later.
+## Current integration
 
-## Expert team
-- News Analyst
-- Macro Analyst
-- Technical Analyst
-- Quant Analyst
-- Regime Analyst
-- Portfolio Manager
-- independent Risk Manager
-- Execution Agent
-- Improvement Agent
+`services/mt5-engine/main.py` collects fresh quotes and up to 600 closed M5 bars for EURUSD, GBPUSD, USDJPY, XAUUSD, GER40, NAS100, US500 and US30. Broker aliases are resolved at startup. It verifies the configured Pepperstone demo account at startup and on every cycle, rejecting real accounts regardless of environment overrides.
 
-Specialists communicate through one machine-readable `AgentSignal` contract. They do not place trades individually. Strategists create complete trade plans; the Portfolio Committee ranks them; the Risk Manager sizes or vetoes them; the Execution Agent remains the final broker boundary.
+Each new closed bar runs News, Macro, Technical, Quant and Regime analysis, the four strategists, committee/risk review, portfolio allocation and execution/improvement reports. Nine standardized agent outputs and an explicit `no_trade` decision are persisted to Supabase. Strategy candidates and their review stages are stored separately. At most one virtual candidate per symbol/strategy is followed to a sampled stop, TP1 or 45-minute horizon; tracking resumes after restart.
 
-See [`docs/EXPERT_TEAM.md`](docs/EXPERT_TEAM.md) for the governance model and [`services/decision-engine/README.md`](services/decision-engine/README.md) for the strategy/learning workflow.
+News and macro feeds are **not configured**. Their missing status causes a funding veto. Daily/weekly account performance, drawdown, stop risk and correlated exposures are not fully reconciled. The runtime therefore never funds a proposal or places an order.
 
-## Four focused strategists
-1. **Opening Range** — breakout/retest around the daily cash-market opening.
-2. **Trend Pullback** — continuation after a controlled pullback in a confirmed trend.
-3. **Compression Breakout** — low-volatility contraction followed by expansion.
-4. **Liquidity Sweep** — failed breakout / sweep-and-reject reversal.
+The agents are deterministic research logic, not connected external AI services. Scores are heuristics, not calibrated probabilities. Tick volume is a proxy. Opening ranges use timezone-aware cash-opening templates without a holiday calendar. Virtual outcomes use sampled bid/ask quotes and omit actual fills, fees, slippage and intratick price paths; they are not broker returns or a backtest. Improvement recommendations never change rules automatically. Real trade management, replay/walk-forward validation, external feeds and dashboard timelines remain separate milestones.
 
-Each strategist outputs: direction, entry, SL, TP1/TP2, setup score, invalidation and a predefined management plan.
+## Windows setup and diagnostic
 
-## Learning architecture
-The system tracks the full decision lifecycle:
+Run in PowerShell from `C:\Users\Jonas\TradingBot` on `feature/pepperstone-demo-bridge`. Stop an existing bridge with **Ctrl+C** before updating:
 
-`pre-trade formation -> candidate -> committee -> risk -> in-trade management -> exit -> post-trade audit`
+```powershell
+git pull --ff-only
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+.\scripts\Setup-Windows.ps1
+.\.venv\Scripts\python.exe .\services\mt5-engine\main.py --once
+```
 
-Pre-trade setup development is recorded before entry, including score progression and market context. During a trade, MFE, MAE, R-multiple and every management action are recorded. Rejected candidates continue in Shadow so the system can measure whether filters were too strict or correctly avoided bad trades.
+Setup checks Git and Python 3.12 x64, installs the pinned Windows dependencies including MT5 and timezone data, checks imports/dependency conflicts and runs the offline core/safety/integration tests. It does not start trading or change an existing `.env`.
 
-Learning is evaluated by `strategy x symbol x regime x session`. The Improvement layer can recommend changes, but it cannot alter live rules automatically.
+Configure `.env` locally using `.env.example`: `SUPABASE_URL` is the project base URL, without `/rest/v1/`; `SUPABASE_SERVICE_ROLE_KEY` accepts the server-side secret key. MT5 must be logged in to the configured Pepperstone demo account. Never share or commit keys/passwords. Existing shell environment variables take precedence over `.env`.
 
-## Architecture
-- **Vercel / Next.js dashboard** — monitoring and control surface
-- **Supabase** — accounts, strategy versions, signals, decisions, trades, pre-trade events, management events, shadow outcomes, metrics and improvement reports
-- **Windows VPS / Python** — expert team + later MetaTrader 5 bridge
-- **GitHub** — source control and deployment source
+`--once` collects one round, persists the nine agent outputs for each analyzed symbol and exits. It fails if there are persistence/analysis errors or no fresh quotes/analysis. Closed markets may have no fresh quotes; retry during the relevant trading session. Symbols with stale quotes are skipped and shown in the heartbeat count.
 
-## Safety model
-- Global trading mode starts at `OFF`.
-- Live execution is separately gated by `live_execution_enabled=false`.
-- `NO_TRADE` is a first-class decision.
-- Risk Manager has hard-veto authority.
-- No martingale, grid rescue, averaging down or stop widening after entry.
-- Additional exposure must be a new trade proposal and pass the complete process again.
-- Candidate strategy changes follow Research -> Backtest/Replay -> Shadow -> 4-week Demo -> explicit approval -> Live.
-- Improvement Agent never edits the live strategy automatically.
+After a successful diagnostic, start continuous observation:
 
-## Initial test universe
-EURUSD, GBPUSD, USDJPY, XAUUSD, DAX40, NAS100.
+```powershell
+.\.venv\Scripts\python.exe .\services\mt5-engine\main.py
+```
 
-## Decision-core source
-- `services/agent_team/` — expert roles and governance
-- `services/decision-engine/` — four strategists, committee, pre-trade recorder, risk, trade management and learning
-- `supabase/learning_schema.sql` — persistence schema extension for learning events
+### Timestamp basis
 
-## Next milestones
-1. Wire the decision-engine persistence adapter to the existing Supabase project.
-2. Add historical replay/backtest and walk-forward runner.
-3. Build dashboard timelines for pre-trade, in-trade and shadow decisions.
-4. Connect news/economic-calendar feeds.
-5. Connect Trive MT5 Demo/Live only after the complete decision system has been validated.
+The observed PepperstoneUK-Demo terminal returns tick timestamp values approximately three hours ahead of a verified Windows UTC clock in October. `MT5_TICK_TIME_MODE=pepperstone_server` is therefore the bridge default for this installation. The conversion follows Pepperstone's documented GMT+3 during US DST / GMT+2 otherwise, using New York timezone rules rather than a fixed subtraction or European DST. `MT5_TICK_TIME_MODE=utc` remains available for feeds whose values already represent UTC. Do not change modes simply to make stale quotes pass.
 
-## Environment variables
-Copy `.env.example` to the relevant runtime environment. Never commit broker passwords, private API keys or Supabase service-role secrets.
+Bars are checked independently: `MT5_BAR_TIME_MODE=auto` selects between UTC and Pepperstone server-wall encoding only when exactly one conversion gives a latest returned bar age between zero and ten minutes. This check happens before filtering future/forming bars. It does not estimate arbitrary clock offsets. An indeterminate/stale history is rejected. Explicit `utc`/`pepperstone_server` bar modes are also available. DST-ambiguous/nonexistent server-wall labels fail closed.
+
+Persisted timestamps are UTC; market telemetry records the original tick value and conversion mode in `technical_context`. Quotes still expire after the configured maximum age (60 seconds by default); only two seconds of future clock jitter are tolerated. This is not a bypass for an incorrect system clock. Existing `.env` files need no change to use the new defaults.
+
+Expect `SHADOW ... 9 agents ... orders=0` lines on newly closed M5 bars and a heartbeat every minute. Candidate count may be zero when no setup qualifies. Use Ctrl+C to stop. `SHADOW_ANALYSIS_ENABLED=false` leaves quote telemetry only; neither setting enables orders.
+
+## Database setup
+
+For a fresh project, apply the core schema first, then `supabase/learning_schema.sql`, then `supabase/shadow_integration_schema.sql`. The latter adds evaluation identifiers and uniqueness constraints for retry-safe writes. Learning tables are server-only: RLS is enabled and privileges for `anon` and `authenticated` are revoked. The informational Supabase [RLS/no-policy notice](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy) is expected for these deliberately private tables; the server service role writes them.
+
+## Source
+
+- `services/agent_team/`: nine expert roles and governance.
+- `services/decision-engine/`: Opening Range, Trend Pullback, Compression Breakout, Liquidity Sweep, committee, allocation and research components.
+- `services/decision_engine/`: importable namespace for that existing source directory.
+- `services/mt5-engine/market_features.py`: closed-bar validation and feature adapter.
+- `services/mt5-engine/shadow_runtime.py`: persistence and sampled virtual tracking.
+- `docs/EXPERT_TEAM.md`: governance model.
+
+## Validation and promotion
+
+Offline tests cover demo account safety, vetoes, all four strategies in both directions, closed-bar/stale-data guards, timezone changes, retry-safe persistence, restart recovery, sampled exits and a complete simulated MT5-to-storage cycle. Actual Windows/MT5 end-to-end validation requires running the diagnostic on the target machine.
+
+Any future execution path requires separate implementation and explicit user approval. Promotion remains research/replay → shadow → approved demo validation → explicit live approval. No martingale, grid rescue, averaging down, stop widening or automatic strategy promotion.
+
+## Read-only MT5 chart monitor
+
+`mt5/Indicators/TradingBotShadow.mq5` is a custom indicator for the existing SHADOW bridge. It shows nine agent reports with direction/confidence/risk, regime, feed/quote/analysis age, warning status and up to four active virtual candidates. Blue Entry, red SL and green TP1/TP2 lines are drawn only while the quote is fresh. The sampled current R value is hypothetical; a visible candidate is never an executed broker position. The indicator contains no order functions, DLL imports or network requests. Algo Trading can remain off.
+
+Stop the Python bridge with Ctrl+C, update the same branch, then:
+
+```powershell
+git pull --ff-only
+.\scripts\Setup-Windows.ps1
+.\.venv\Scripts\python.exe .\services\mt5-engine\install_chart.py
+.\.venv\Scripts\python.exe .\services\mt5-engine\main.py
+```
+
+The installer verifies the configured Pepperstone demo account, copies the source into that terminal's actual data folder under `MQL5/Indicators/TradingBot`, and attempts compilation with its `metaeditor64.exe`. It reports whether a new `.ex5` was produced. If compilation is not confirmed, read the reported log or open the installed `.mq5` in MetaEditor and press F7. Compilation and visual rendering must be verified on Windows; offline Python tests do not compile MQL5.
+
+In MT5, open the desired symbol's M5 chart. Show Navigator with Ctrl+N, right-click Indicators and Refresh, then drag **TradingBot > TradingBotShadow** onto the chart. Add one instance per chart. Select `StrategyFilter` to focus on one strategy when lines overlap, or `all` for all active virtual candidates. `ShowLevels=false` keeps just the status panel.
+
+The bridge writes a small credential-free CSV snapshot per broker symbol into `MQL5/Files/TradingBotShadow`. Writes use atomic replacement and an END record. The indicator checks a complete frame, symbol, demo account and freshness before rendering. A stopped feed is marked stale after 30 seconds, and its levels disappear. Missing/stale quotes also suppress levels. After removing the indicator, only its own prefixed objects are deleted. Chart export failures do not stop market analysis. Charts with no candidates show the status panel without fabricated price levels.

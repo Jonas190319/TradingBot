@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, Iterable, List, Optional
 from uuid import uuid4
 
-from models import Direction, MarketSnapshot, Regime, TradeCandidate
+from .models import Direction, MarketSnapshot, Regime, TradeCandidate
 
 
 def _f(features: Dict[str, object], key: str, default: float = 0.0) -> float:
