@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from services.agent_team.models import Bar
 from broker_clock import timestamp_utc
+from supply_demand import zone_features
 
 BAR_SECONDS = 300
 MIN_BARS = 60
@@ -114,6 +115,7 @@ def build_features(symbol, now, bars):
              retest_quality=0, opening_range_quality=0,
              score_method='heuristic-v1-not-calibrated', bar_ts=last.ts.isoformat(),
              tick_volume_is_proxy=True)
+    f.update(zone_features(bars, atr))
     f.update(opening_range(symbol, now, bars))
     if f['or_ready']:
         width = f['or_high']-f['or_low']
