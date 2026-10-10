@@ -182,9 +182,122 @@ class LiquiditySweepStrategist(Strategist):
                                {"sweep_side": "lows", "rejection": rejection})
 
 
+
+class SupplyDemandStrategist(Strategist):
+    """Trade only a confirmed closed-candle rejection of an established zone."""
+    name = "supply_demand"
+
+    def evaluate(self, snap: MarketSnapshot, regime: Regime) -> Optional[TradeCandidate]:
+        f = snap.features
+        if not f.get("sd_zone_present") or not f.get("sd_zone_reaction"):
+            return None
+        side = f.get("sd_zone_side")
+        if side not in {"demand", "supply"}:
+            return None
+        lower, upper = _f(f, "sd_zone_lower"), _f(f, "sd_zone_upper")
+        atr = max(_f(f, "atr"), snap.spread * 20)
+        if not (0 < lower < upper and atr > 0):
+            return None
+        direction = Direction.LONG if side == "demand" else Direction.SHORT
+        entry = snap.mid
+        stop = min(lower - 0.15 * atr, entry - 0.7 * atr) if side == "demand" else max(upper + 0.15 * atr, entry + 0.7 * atr)
+        risk = abs(entry - stop)
+        if risk <= snap.spread * 3 or risk > atr * 3:
+            return None
+        touches = _f(f, "sd_zone_touches")
+        score = _clip(60 + min(_f(f, "sd_zone_departure_atr"), 3) * 5 - max(0, touches - 1) * 8)
+        evidence = {"zone_side": side, "lower": lower, "upper": upper,
+                    "origin_ts": f.get("sd_zone_origin_ts"), "confirmed_ts": f.get("sd_zone_confirmed_ts"),
+                    "touches": touches, "method": f.get("sd_method"), "sampled": True}
+        sign = 1 if side == "demand" else -1
+        return self._candidate(snap, regime, direction, score, entry, stop,
+                               entry + sign * 1.6 * risk, entry + sign * 2.4 * risk,
+                               "confirmed close through the opposite side of the zone", evidence)
+
+
+class RangeTradingStrategist(Strategist):
+    """Range bounce with closed-bar rejection; no blind limit orders."""
+    name = "range_trading"
+
+    def evaluate(self, snap: MarketSnapshot, regime: Regime) -> Optional[TradeCandidate]:
+        f = snap.features
+        if regime != Regime.RANGE:
+            return None
+        high, low, atr = _f(f, "range_high"), _f(f, "range_low"), _f(f, "atr")
+        close, prev = _f(f, "last_close"), _f(f, "last_open")
+        if not (high > low > 0 and atr > 0 and high - low >= 2 * atr):
+            return None
+        entry = snap.mid
+        if low <= close <= low + 0.3 * atr and close > prev:
+            stop = low - 0.3 * atr
+            direction = Direction.LONG
+            sign = 1
+        elif high - 0.3 * atr <= close <= high and close < prev:
+            stop = high + 0.3 * atr
+            direction = Direction.SHORT
+            sign = -1
+        else:
+            return None
+        risk = abs(entry - stop)
+        if risk <= snap.spread * 3 or risk > atr * 2:
+            return None
+        return self._candidate(snap, regime, direction, 62, entry, stop,
+                               entry + sign * 1.5 * risk, entry + sign * 2.2 * risk,
+                               "range boundary broken on closed candle",
+                               {"range_low": low, "range_high": high, "confirmation": "closed-bar rejection"})
+
+
+class VWAPReclaimStrategist(Strategist):
+    """Research only; requires a session VWAP and explicit tick-volume provenance."""
+    name = "vwap_reclaim"
+
+    def evaluate(self, snap: MarketSnapshot, regime: Regime) -> Optional[TradeCandidate]:
+        f = snap.features
+        if not f.get("vwap_ready") or not f.get("vwap_reclaim_side"):
+            return None
+        side = f.get("vwap_reclaim_side")
+        if side not in {"long", "short"}:
+            return None
+        atr = max(_f(f, "atr"), snap.spread * 20)
+        if atr <= 0:
+            return None
+        sign = 1 if side == "long" else -1
+        entry = snap.mid
+        stop = entry - sign * atr
+        return self._candidate(snap, regime, Direction.LONG if sign == 1 else Direction.SHORT,
+                               60, entry, stop, entry + sign * 1.6 * atr, entry + sign * 2.4 * atr,
+                               "session VWAP reclaim fails",
+                               {"vwap": f.get("session_vwap"), "volume_proxy": "tick_volume",
+                                "session": f.get("vwap_session")})
+
+
+class MeanReversionStrategist(Strategist):
+    """Low-priority experiment; requires observed stretch and reversal."""
+    name = "mean_reversion"
+
+    def evaluate(self, snap: MarketSnapshot, regime: Regime) -> Optional[TradeCandidate]:
+        f = snap.features
+        if regime != Regime.RANGE:
+            return None
+        deviation, atr = _f(f, "mean_deviation_atr"), _f(f, "atr")
+        reversal = _f(f, "reversal_direction")
+        if atr <= 0 or abs(deviation) < 2 or reversal == 0 or deviation * reversal >= 0:
+            return None
+        sign = 1 if reversal > 0 else -1
+        entry = snap.mid
+        stop = entry - sign * atr
+        return self._candidate(snap, regime, Direction.LONG if sign > 0 else Direction.SHORT,
+                               50, entry, stop, entry + sign * 1.3 * atr, entry + sign * 2 * atr,
+                               "mean reversion rejection failed",
+                               {"deviation_atr": deviation, "research_priority": "low"})
+
 CORE_STRATEGISTS: List[Strategist] = [
     OpeningRangeStrategist(),
     TrendPullbackStrategist(),
     CompressionBreakoutStrategist(),
     LiquiditySweepStrategist(),
+    SupplyDemandStrategist(),
+    RangeTradingStrategist(),
+    VWAPReclaimStrategist(),
+    MeanReversionStrategist(),
 ]
