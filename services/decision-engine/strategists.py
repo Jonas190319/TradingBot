@@ -291,6 +291,45 @@ class MeanReversionStrategist(Strategist):
                                "mean reversion rejection failed",
                                {"deviation_atr": deviation, "research_priority": "low"})
 
+
+class HarmonicPatternStrategist(Strategist):
+    """One independent shadow strategy per pattern, with confirmed pivot evidence."""
+    def __init__(self, pattern: str):
+        if pattern not in {"gartley", "bat", "butterfly", "crab", "shark"}:
+            raise ValueError("Unknown harmonic pattern")
+        self.pattern = pattern
+        self.name = "harmonic_" + pattern
+
+    def evaluate(self, snap: MarketSnapshot, regime: Regime) -> Optional[TradeCandidate]:
+        f = snap.features
+        if not f.get("harmonic_ready"):
+            return None
+        match = next((m for m in f.get("harmonic_matches", [])
+                      if m.get("pattern") == self.pattern), None)
+        if not match or match.get("direction") not in {"long", "short"}:
+            return None
+        atr = max(_f(f, "atr"), snap.spread * 20)
+        if atr <= 0:
+            return None
+        sign = 1 if match["direction"] == "long" else -1
+        pivot = float(match["pivot_price"])
+        entry = snap.mid
+        stop = min(pivot - 0.2 * atr, entry - 0.7 * atr) if sign > 0 else max(pivot + 0.2 * atr, entry + 0.7 * atr)
+        risk = abs(entry - stop)
+        if risk <= snap.spread * 3 or risk > atr * 3:
+            return None
+        zone_side = "demand" if sign > 0 else "supply"
+        confluence = bool(f.get("sd_zone_present") and f.get("sd_zone_side") == zone_side)
+        score = 62 + (8 if confluence else 0)
+        return self._candidate(snap, regime, Direction.LONG if sign > 0 else Direction.SHORT,
+                               score, entry, stop, entry + sign * 1.5 * risk,
+                               entry + sign * 2.3 * risk,
+                               "confirmed pattern pivot invalidated",
+                               {"pattern": self.pattern, "confirmed_pivot": match,
+                                "supply_demand_confluence": confluence,
+                                "heuristic_not_win_probability": True})
+
+
 CORE_STRATEGISTS: List[Strategist] = [
     OpeningRangeStrategist(),
     TrendPullbackStrategist(),
@@ -300,4 +339,9 @@ CORE_STRATEGISTS: List[Strategist] = [
     RangeTradingStrategist(),
     VWAPReclaimStrategist(),
     MeanReversionStrategist(),
+    HarmonicPatternStrategist('gartley'),
+    HarmonicPatternStrategist('bat'),
+    HarmonicPatternStrategist('butterfly'),
+    HarmonicPatternStrategist('crab'),
+    HarmonicPatternStrategist('shark'),
 ]
