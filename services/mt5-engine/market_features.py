@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from services.agent_team.models import Bar
 from broker_clock import timestamp_utc
 from supply_demand import zone_features
+from harmonic_features import harmonic_features
 
 BAR_SECONDS = 300
 MIN_BARS = 60
@@ -138,6 +139,7 @@ def build_features(symbol, now, bars):
         elif prev.close > vwap > last.close and last.close < last.open:
             f['vwap_reclaim_side'] = 'short'
     f.update(zone_features(bars, atr))
+    f.update(harmonic_features(bars, atr))
     f.update(opening_range(symbol, now, bars))
     if f['or_ready']:
         width = f['or_high']-f['or_low']
