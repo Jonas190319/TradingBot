@@ -115,6 +115,28 @@ def build_features(symbol, now, bars):
              retest_quality=0, opening_range_quality=0,
              score_method='heuristic-v1-not-calibrated', bar_ts=last.ts.isoformat(),
              tick_volume_is_proxy=True)
+    # All boundaries use prior closed candles, excluding the signal candle.
+    f['range_high'] = recent_high
+    f['range_low'] = recent_low
+    f['last_open'] = last.open
+    f['last_close'] = last.close
+    f['mean_deviation_atr'] = (last.close - slow) / atr
+    f['reversal_direction'] = (1 if last.close > last.open and prev.close < prev.open
+                               else -1 if last.close < last.open and prev.close > prev.open else 0)
+    # Tick-volume-weighted typical price, reset at UTC day boundary. Proxy, not exchange VWAP.
+    session_bars = [b for b in bars if b.ts.date() == last.ts.date()]
+    total_volume = sum(b.volume for b in session_bars)
+    f['vwap_ready'] = len(session_bars) >= 5 and total_volume > 0
+    f['vwap_session'] = last.ts.date().isoformat()
+    f['session_vwap'] = (sum(((b.high + b.low + b.close) / 3) * b.volume for b in session_bars)
+                         / total_volume) if f['vwap_ready'] else None
+    f['vwap_reclaim_side'] = None
+    if f['vwap_ready']:
+        vwap = f['session_vwap']
+        if prev.close < vwap < last.close and last.close > last.open:
+            f['vwap_reclaim_side'] = 'long'
+        elif prev.close > vwap > last.close and last.close < last.open:
+            f['vwap_reclaim_side'] = 'short'
     f.update(zone_features(bars, atr))
     f.update(opening_range(symbol, now, bars))
     if f['or_ready']:
