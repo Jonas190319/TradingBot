@@ -22,7 +22,7 @@ class Zone:
 
 def detect_zones(bars: Sequence, atr: float, *, lookback: int = 100,
                  impulse_atr: float = 1.5, max_base_atr: float = 1.2) -> list[Zone]:
-    if atr <= 0 or len(bars) < 5:
+    if atr <= 0 or len(bars) < 3:
         return []
     recent = bars[-lookback:]
     zones = []
