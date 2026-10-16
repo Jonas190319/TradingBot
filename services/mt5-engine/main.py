@@ -10,6 +10,7 @@ import MetaTrader5 as mt5
 from supabase import create_client
 
 from config import load_settings
+from account_guardrails import evaluate_account_health
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from market_features import bars_from_rates
@@ -170,11 +171,19 @@ def main(once=False) -> None:
         print(f'Timestamp modes: ticks={settings.mt5_tick_time_mode}; bars={settings.mt5_bar_time_mode}; stored timestamps=UTC')
         print('Execution remains disabled. SHADOW analysis=' + ('ON' if runtime else 'OFF'))
         print('News/calendar feed missing; funding veto active; no automatic orders.')
+        last_health_status = None
         last_history_check = {}
         heartbeat = 0
 
         while True:
             account = verify_account(settings)
+            health = evaluate_account_health(account)
+            health_status = (health.demo_orders_allowed, health.reasons)
+            if health_status != last_health_status:
+                print(f'DEMO HEALTH: demo_orders_eligible={health.demo_orders_allowed}; '
+                      f'reasons={",".join(health.reasons) or "none"}; '
+                      'SHADOW continues; order execution remains OFF', flush=True)
+                last_health_status = health_status
             positions = mt5.positions_get()
             fresh = 0
             failed = 0
