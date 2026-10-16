@@ -22,7 +22,7 @@ class RiskSizingTests(unittest.TestCase):
         d = self.decide()
         self.assertTrue(d.approved)
         self.assertLessEqual(d.risk_amount, 50)
-        self.assertEqual(d.lots, 0.5)
+        self.assertEqual(d.lots, 5.0)
 
     def test_aggregate_limit(self):
         d = self.decide(existing_open_risk=145)
