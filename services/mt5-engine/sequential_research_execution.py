@@ -39,7 +39,7 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
         entry = float(rows[i+1]["open"])
         if side not in ("long", "short"):
             raise ValueError("Invalid side")
-        if not all(isfinite(x) and x > 0 for x in (entry, stop, target)):
+        if not all(isfinite(x) and x > 0 for x in (entry, stop)) or (target is not None and (not isfinite(target) or target <= 0)):
             raise ValueError("Invalid prices")
         # No favorable repricing: charge full round-trip cost to entry.
         entry += (1 if side == "long" else -1)*cost_ticks*tick_size
