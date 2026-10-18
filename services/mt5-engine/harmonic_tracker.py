@@ -25,6 +25,7 @@ class TrackedPattern:
     d_price: float
     discovered_at: int
     last_seen_at: int
+    reference_atr: float
     status: str = "active"
     signaled: bool = False
 
@@ -64,7 +65,7 @@ class HarmonicTracker:
                 self.seen_ids.add(key)
                 self.active[key] = TrackedPattern(
                     key, match.pattern, match.direction, pivots[-1].price,
-                    bar_index, bar_index,
+                    bar_index, bar_index, atr,
                 )
                 events.append(("discovered", key, match.pattern))
             elif key in self.active:
@@ -77,7 +78,7 @@ class HarmonicTracker:
                 del self.active[key]
                 continue
             zone = classify_completion_zone(
-                state.direction, state.d_price, candle.close, atr,
+                state.direction, state.d_price, candle.close, state.reference_atr,
                 inner_atr=self.inner_atr, invalidation_atr=self.invalidation_atr,
             )
             if zone["status"] == "invalidated":
