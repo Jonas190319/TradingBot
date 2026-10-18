@@ -32,6 +32,7 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
         raise ValueError("Duplicate timestamps")
     totals = {h: Counter() for h in HORIZONS}
     outcomes = {h: [] for h in HORIZONS}
+    by_pattern = {h: defaultdict(list) for h in HORIZONS}
     segment_start = 0
     for boundary in range(1, len(rows) + 1):
         if boundary < len(rows) and times[boundary] - times[boundary - 1] == 300:
@@ -39,6 +40,7 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
         segment = rows[segment_start:boundary]
         if len(segment) >= 350:
             signals = {h: [] for h in HORIZONS}
+            labels = {h: {} for h in HORIZONS}
             trackers = {h: HarmonicTracker(max_age_bars=h) for h in HORIZONS}
             for i in range(300, len(segment) - 1):
                 if i < 60:
@@ -78,22 +80,20 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                             side = match.direction
                         else:
                             d_price, side = state.d_price, state.direction
-                        stop = d_price + (-1 if side == "long" else 1)*1.5*atr
-                        close = float(bars[-1].close)
-                        risk = abs(close - stop)
-                        if risk <= 0:
-                            totals[h]["invalid_geometry"] += 1
-                            continue
-                        target = close + (1 if side == "long" else -1)*2*risk
+                        reference_atr = state.reference_atr if state is not None else atr
+                        stop = d_price + (-1 if side == "long" else 1)*1.5*reference_atr
                         signals[h].append({"bar_index": i, "side": side,
-                                           "stop": stop, "target": target})
+                                           "stop": stop, "target_rr": 2.0})
+                        labels[h][i] = pattern
             for h in HORIZONS:
                 result = simulate_signals(segment, signals[h], cost_ticks=cost_ticks,
                                           tick_size=tick_size, max_hold=max_hold)
                 outcomes[h].extend(result)
+                for item in result:
+                    by_pattern[h][labels[h][item["bar_index"]]].append(item)
                 totals[h]["candidate_signals"] += len(signals[h])
         segment_start = boundary
-    return totals, outcomes
+    return totals, outcomes, by_pattern
 
 
 def main():
@@ -129,7 +129,7 @@ def main():
                 continue
             rows = [r for r in rates if int(r["time"]) + 300 <= end.timestamp()]
             print(symbol, "bars", len(rows), flush=True)
-            totals, outcomes = evaluate(rows, symbol, float(info.point),
+            totals, outcomes, by_pattern = evaluate(rows, symbol, float(info.point),
                                         cost_ticks=args.cost_ticks, max_hold=args.max_hold)
             for h in HORIZONS:
                 results = outcomes[h]
@@ -144,6 +144,13 @@ def main():
                       f"invalid_fill={sum(r['outcome']=='invalid_at_fill' for r in results)} "
                       f"expired={totals[h]['expired']} invalidated={totals[h]['invalidated']}",
                       flush=True)
+            for h in HORIZONS:
+                for pattern, pattern_results in sorted(by_pattern[h].items()):
+                    resolved = [x["r"] for x in pattern_results if x["r"] is not None]
+                    avg = sum(resolved)/len(resolved) if resolved else None
+                    print(f"    horizon={h} pattern={pattern} fills={len(pattern_results)} "
+                          f"resolved={len(resolved)} mean_R={avg if avg is not None else 'n/a'}",
+                          flush=True)
         print("Research only; no orders or uploads", flush=True)
     finally:
         mt5.shutdown()
