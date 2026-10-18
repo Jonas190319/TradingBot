@@ -52,7 +52,7 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900):
     except ValueError as exc:
         return {"symbol": logical, "status": "invalid_data", "reason": str(exc)}
     return {"symbol": logical, "status": "ok", "prior_day": str(previous),
-            "today": str(today), "bars_today": len(sessions[today]),
+            "today": str(today), "bars_today": len(sessions[today]), "bars_prior": len(sessions[previous]), "last_closed_utc": latest_closed.isoformat(),
             "vah": profile.vah, "poc": profile.poc, "val": profile.val,
             "signals": [{"strategy": s.strategy, "side": s.side, "entry": s.entry,
                          "stop": s.stop, "target": s.target} for s in signals]}
@@ -83,9 +83,9 @@ def main():
             try:
                 result = scan_symbol(mt5, logical, broker, now, args.bars)
                 if result["status"] == "ok":
-                    print(f"{logical} ({broker}): prior={result['prior_day']} VAL={result['val']} POC={result['poc']} VAH={result['vah']} signals={result['signals']}")
+                    print(f"{logical} ({broker}): prior={result['prior_day']} prior_bars={result['bars_prior']} today_bars={result['bars_today']} VAL={result['val']} POC={result['poc']} VAH={result['vah']} signals={result['signals']}")
                 else:
-                    print(f"{logical} ({broker}): {result['status']}")
+                    print(f"{logical} ({broker}): {result['status']}" + (f" last_closed_utc={result['last_closed_utc']}" if result.get("last_closed_utc") else ""))
             except Exception as exc:
                 print(f"{logical}: scan error {type(exc).__name__}")
     finally:
