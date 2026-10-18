@@ -308,6 +308,8 @@ class HarmonicPatternStrategist(Strategist):
                       if m.get("pattern") == self.pattern), None)
         if not match or match.get("direction") not in {"long", "short"}:
             return None
+        if match.get("zone", {}).get("status") != "entry_zone" or not match.get("entry_confirmed"):
+            return None
         atr = max(_f(f, "atr"), snap.spread * 20)
         if atr <= 0:
             return None
