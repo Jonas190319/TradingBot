@@ -11,7 +11,7 @@ import sys
 from vwap_volume_profile import Bar, detect_signals, volume_profile
 
 
-def scan_symbol(mt5, logical, broker, now, bars_count=900):
+def scan_symbol(mt5, logical, broker, now, bars_count=900, diagnose=False):
     info = mt5.symbol_info(broker)
     if info is None:
         return {"symbol": logical, "status": "missing_symbol"}
@@ -35,6 +35,18 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900):
     # Do not emit weekend/stale signals from the last historical Friday bar.
     if latest_closed is None or now - (latest_closed + timedelta(minutes=5)) > timedelta(minutes=20):
         return {"symbol": logical, "status": "market_closed_or_stale",
+                "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
+    if diagnose:
+        day_rows = []
+        for day in sorted(sessions)[-5:]:
+            timestamps = [datetime.fromtimestamp(int(rate["time"]), timezone.utc) for rate in rates
+                          if datetime.fromtimestamp(int(rate["time"]), timezone.utc).date() == day
+                          and datetime.fromtimestamp(int(rate["time"]), timezone.utc) + timedelta(minutes=5) <= now]
+            if timestamps:
+                day_rows.append({"day": str(day), "bars": len(timestamps),
+                                 "first_utc": min(timestamps).strftime("%H:%M"),
+                                 "last_utc": max(timestamps).strftime("%H:%M")})
+        return {"symbol": logical, "status": "diagnostic", "days": day_rows,
                 "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
     if len(sessions) < 2:
         return {"symbol": logical, "status": "missing_prior_day"}
@@ -61,6 +73,7 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900):
 def main():
     parser = argparse.ArgumentParser(description="Read-only multi-market VWAP/profile scan; orders=0")
     parser.add_argument("--bars", type=int, default=900)
+    parser.add_argument("--diagnose-sessions", action="store_true", help="Print historical UTC bar coverage even when markets are closed")
     args = parser.parse_args()
     if not 100 <= args.bars <= 3000:
         parser.error("--bars must be 100..3000")
@@ -81,8 +94,12 @@ def main():
                 print(f"{logical}: unavailable")
                 continue
             try:
-                result = scan_symbol(mt5, logical, broker, now, args.bars)
-                if result["status"] == "ok":
+                result = scan_symbol(mt5, logical, broker, now, args.bars, args.diagnose_sessions)
+                if result["status"] == "diagnostic":
+                    print(f"{logical} ({broker}): last_closed_utc={result['last_closed_utc']}")
+                    for day in result["days"]:
+                        print(f"  {day['day']}: bars={day['bars']} first_utc={day['first_utc']} last_utc={day['last_utc']}")
+                elif result["status"] == "ok":
                     print(f"{logical} ({broker}): prior={result['prior_day']} prior_bars={result['bars_prior']} today_bars={result['bars_today']} VAL={result['val']} POC={result['poc']} VAH={result['vah']} signals={result['signals']}")
                 else:
                     print(f"{logical} ({broker}): {result['status']}" + (f" last_closed_utc={result['last_closed_utc']}" if result.get("last_closed_utc") else ""))
