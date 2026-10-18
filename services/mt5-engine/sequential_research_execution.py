@@ -33,7 +33,9 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
         if i <= busy_until or i < 0 or i+1 >= len(rows):
             continue
         side = signal["side"]
-        stop, target = float(signal["stop"]), float(signal["target"])
+        stop = float(signal["stop"])
+        rr = signal.get("target_rr")
+        target = float(signal["target"]) if rr is None else None
         entry = float(rows[i+1]["open"])
         if side not in ("long", "short"):
             raise ValueError("Invalid side")
@@ -41,6 +43,11 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
             raise ValueError("Invalid prices")
         # No favorable repricing: charge full round-trip cost to entry.
         entry += (1 if side == "long" else -1)*cost_ticks*tick_size
+        if rr is not None:
+            rr = float(rr)
+            if not isfinite(rr) or rr <= 0:
+                raise ValueError("Invalid target_rr")
+            target = entry + (1 if side == "long" else -1)*rr*abs(entry-stop)
         if not ((side == "long" and stop < entry < target) or
                 (side == "short" and target < entry < stop)):
             outcomes.append({"outcome":"invalid_at_fill", "r":None,
