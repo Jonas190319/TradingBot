@@ -74,6 +74,7 @@ def main():
     parser = argparse.ArgumentParser(description="Read-only MT5 -> Supabase deal journal")
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--commit", action="store_true", help="Actually upload; default is dry-run")
+    parser.add_argument("--env-file", type=Path, help="Explicit local .env path")
     parser.add_argument("--batch-size", type=int, default=100)
     args = parser.parse_args()
     if not 1 <= args.days <= 3650 or not 1 <= args.batch_size <= 500:
@@ -85,10 +86,10 @@ def main():
         account = mt5.account_info()
         if account is None or not account.login or not account.server:
             raise RuntimeError("MT5 account identification unavailable")
-        expected_login = os.environ.get("MT5_LOGIN", "").strip()
-        expected_server = os.environ.get("MT5_SERVER", "").strip()
-        # Never silently upload another account's history.
-        load_env(Path(__file__).resolve().parents[2] / ".env")
+        env_path = args.env_file if args.env_file else Path(__file__).resolve().parents[2] / ".env"
+        if not env_path.is_file():
+            raise RuntimeError(f"Local configuration file not found: {env_path}")
+        load_env(env_path)
         expected_login = os.environ.get("MT5_LOGIN", "").strip()
         expected_server = os.environ.get("MT5_SERVER", "").strip()
         if not expected_login or not expected_server:
