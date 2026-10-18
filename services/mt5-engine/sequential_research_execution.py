@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from math import isfinite
 
 
-def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
+def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, allow_gaps=False):
     """Return sequential outcomes for candidate dicts with bar_index, side, stop, target.
 
     OHLC execution proxy: next bar open, with unfavorable entry slippage of
@@ -24,13 +24,18 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
     if not all(isfinite(float(v)) and float(v) >= 0 for v in (cost_ticks, tick_size)):
         raise ValueError("Invalid cost settings")
     times = [int(x["time"]) for x in rows]
-    if any(b-a != 300 for a,b in zip(times,times[1:])):
-        raise ValueError("M5 candles must be contiguous; split sessions before simulating")
+    if any((b-a < 300 or (b-a != 300 and not allow_gaps)) for a,b in zip(times,times[1:])):
+        raise ValueError("Invalid M5 timestamps or gaps not permitted")
     outcomes = []
     busy_until = -1
     for signal in sorted(signals, key=lambda s: int(s["bar_index"])):
         i = int(signal["bar_index"])
         if i <= busy_until or i < 0 or i+1 >= len(rows):
+            continue
+        if times[i+1] - times[i] != 300:
+            # No hypothetical fill across a closed-market interval.
+            outcomes.append({"outcome":"no_fill_gap", "r":None,
+                             "bar_index":i, "exit_index":i})
             continue
         side = signal["side"]
         stop = float(signal["stop"])
@@ -64,6 +69,11 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48):
                 raise ValueError("Invalid OHLC")
             hit_stop = lo <= stop if side=="long" else hi >= stop
             hit_target = hi >= target if side=="long" else lo <= target
+            # At a reopened market, execute adverse gap-through-stop first.
+            if j > i+1 and times[j] - times[j-1] > 300 and (op <= stop if side=="long" else op >= stop):
+                pnl = (op-entry) if side=="long" else (entry-op)
+                result.update(outcome="stop_gap",r=pnl/risk,exit_index=j)
+                break
             if hit_stop and hit_target:
                 result.update(outcome="ambiguous",r=None,exit_index=j)
                 break
