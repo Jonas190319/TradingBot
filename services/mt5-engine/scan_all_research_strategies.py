@@ -45,13 +45,14 @@ def evaluate_existing(logical, rates, now, bid, ask):
     return results, regime.value
 
 
-def run(mt5, now, bars_count=900, journal_preview=False):
+def run(mt5, now, bars_count=900, journal_preview=False, collect_records=False):
     from main import SYMBOL_ALIASES
     validate_inventory((s.name for s in CORE_STRATEGISTS), NEW, SYMBOL_ALIASES)
     print(f"Coverage: {len(EXISTING) + len(NEW)} strategies x {len(MARKETS)} markets = 128 checks; orders=0")
     account = mt5.account_info()
     if account is None or getattr(account, "trade_mode", None) != mt5.ACCOUNT_TRADE_MODE_DEMO:
         raise RuntimeError("Read-only scanner requires a verified demo account")
+    collected = []
     for logical in MARKETS:
         broker = next((s for s in SYMBOL_ALIASES[logical] if mt5.symbol_info(s) is not None), None)
         if broker is None:
@@ -82,15 +83,18 @@ def run(mt5, now, bars_count=900, journal_preview=False):
                 profile_results = {s: [] for s in NEW}
                 print(f"{logical}: evaluated=13/16; profile={profile['status']}; "
                       f"regime_heuristic={regime}; candidates={sum(v is not None for v in existing.values())}; orders=0")
-            if journal_preview:
+            if journal_preview or collect_records:
                 from json import dumps
                 # Latest completed M5 bar opening time is the stable observation key.
                 rows = records_from_scan(str(account.server), int(account.login), broker,
                                          logical, latest, existing,
                                          profile_signals if profile["status"] == "ok" else [])
-                print(f"  journal_preview={len(rows)}; persisted=0; orders=0")
-                for row in rows:
-                    print("  JOURNAL " + dumps(row, sort_keys=True, allow_nan=False))
+                if journal_preview:
+                    print(f"  journal_preview={len(rows)}; persisted=0; orders=0")
+                    for row in rows:
+                        print("  JOURNAL " + dumps(row, sort_keys=True, allow_nan=False))
+                if collect_records:
+                    collected.extend(rows)
             for strategy, result in existing.items():
                 if result is not None:
                     print(f"  {strategy}: {result['side']} entry={result['entry']} stop={result['stop']} target={result['target']}")
@@ -101,6 +105,8 @@ def run(mt5, now, bars_count=900, journal_preview=False):
             print(f"{logical}: skipped ({type(exc).__name__}: {exc}); orders=0")
         except Exception as exc:
             print(f"{logical}: error={type(exc).__name__}; orders=0")
+
+    return collected
 
 
 def main():
