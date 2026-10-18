@@ -87,6 +87,13 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
                 pnl = (target-entry) if side=="long" else (entry-target)
                 result.update(outcome="target",r=pnl/risk,exit_index=j)
                 break
+        if result["outcome"] == "unresolved":
+            # End-of-horizon mark-to-market proxy, not an executed exit.
+            last_close = float(rows[result["exit_index"]]["close"])
+            if not isfinite(last_close) or last_close <= 0:
+                raise ValueError("Invalid final close")
+            result["mark_r"] = ((last_close-entry) if side=="long"
+                                else (entry-last_close))/risk
         outcomes.append(result)
         busy_until = result["exit_index"]
     return outcomes
