@@ -118,12 +118,14 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
 def main():
     p = argparse.ArgumentParser(description="Historical research only; no orders or uploads")
     p.add_argument("--bars", type=int, default=1600)
+    p.add_argument("--history-days", type=int, choices=(0, 180, 365), default=0,
+                   help="0=bar count, 180=about six months, 365=about one year of MT5 history")
     p.add_argument("--lookahead", type=int, default=48)
     p.add_argument("--step", type=int, default=5)
     p.add_argument("--cost-ticks", type=float, default=0,
                    help="Assumed round-trip cost in tick-size units; not measured broker spread")
     args = p.parse_args()
-    if not 1000 <= args.bars <= 5000 or not 1 <= args.lookahead <= 288 or not 1 <= args.step <= 100 or not 0 <= args.cost_ticks <= 1000:
+    if not 1000 <= args.bars <= 100000 or not 1 <= args.lookahead <= 288 or not 1 <= args.step <= 100 or not 0 <= args.cost_ticks <= 1000:
         p.error("Invalid bars/lookahead/step")
     import MetaTrader5 as mt5
     from main import SYMBOL_ALIASES
@@ -140,7 +142,13 @@ def main():
             if broker is None:
                 print(f"{logical}: unavailable")
                 continue
-            rates = mt5.copy_rates_from_pos(broker, mt5.TIMEFRAME_M5, 1, args.bars)
+            if args.history_days:
+                from datetime import datetime, timedelta, timezone
+                end = datetime.now(timezone.utc)
+                start = end - timedelta(days=args.history_days)
+                rates = mt5.copy_rates_range(broker, mt5.TIMEFRAME_M5, start, end)
+            else:
+                rates = mt5.copy_rates_from_pos(broker, mt5.TIMEFRAME_M5, 1, args.bars)
             if rates is None or len(rates) < 1000:
                 print(f"{logical}: insufficient_history")
                 continue
@@ -149,7 +157,7 @@ def main():
             try:
                 result, quality = research_market(logical, rates, tick_size, args.lookahead,
                                                   step=args.step, cost_ticks=args.cost_ticks)
-                print(f"\n{logical} ({broker}): {quality}")
+                print(f"\n{logical} ({broker}): bars_received={len(rates)} {quality}")
                 for strategy, summary in result.items():
                     rate = f"{summary['win_rate']:.1%}" if summary["win_rate"] is not None else "n/a"
                     mean_r = f"{summary['mean_r']:.2f}" if summary["mean_r"] is not None else "n/a"
