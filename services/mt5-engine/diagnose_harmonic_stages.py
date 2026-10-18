@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from harmonic_features import confirmed_pivots
+from harmonic_tracker import HarmonicTracker
 from market_features import bars_from_rates
 from services.decision_engine.harmonic_patterns import (
     classify_completion_zone, detect_shark, detect_xabcd,
@@ -27,26 +28,33 @@ def diagnose(rates, step=1, warmup=300):
         raise ValueError("Duplicate M5 timestamps")
     counts = Counter()
     unique = set()
+    tracker = HarmonicTracker(max_age_bars=48)
+    previous_index = None
     for i in range(warmup, len(rows), step):
+        if (previous_index is not None and times[i] - times[previous_index] != 300 * (i - previous_index)):
+            tracker.reset()
+            counts["tracker_gap_resets"] += 1
+        previous_index = i
         if any(times[j + 1] - times[j] != 300 for j in range(i - 59, i)):
+            tracker.reset()
             counts["skipped_recent_gap"] += 1
             continue
         now = datetime.fromtimestamp(times[i] + 300, timezone.utc)
         bars = bars_from_rates(rows[max(0, i - 599):i + 1], now, "utc")
         counts["evaluated"] += 1
         pivots = confirmed_pivots(bars)
-        if len(pivots) < 5:
-            continue
-        counts["five_pivots"] += 1
-        last = pivots[-5:]
-        d_index, d = last[-1]
-        if len(bars) - 1 - d_index > 8:
-            continue
-        counts["fresh_d"] += 1
-        matches = detect_xabcd([p for _, p in last]) + detect_shark([p for _, p in last])
-        if not matches:
-            continue
-        counts["ratio_windows"] += 1
+        detections = []
+        matches = []
+        if len(pivots) >= 5:
+            counts["five_pivots"] += 1
+            last = pivots[-5:]
+            d_index, d = last[-1]
+            if len(bars) - 1 - d_index <= 8:
+                counts["fresh_d"] += 1
+                matches = detect_xabcd([p for _, p in last]) + detect_shark([p for _, p in last])
+                if matches:
+                    counts["ratio_windows"] += 1
+                    detections = [("RESEARCH", m, [p for _, p in last]) for m in matches]
         true_ranges = [
             max(cur.high - cur.low, abs(cur.high - prev.close),
                 abs(cur.low - prev.close))
@@ -60,21 +68,18 @@ def diagnose(rates, step=1, warmup=300):
             counts["ratio_matches"] += 1
             unique.add(key)
             counts["pattern_" + match.pattern] += 1
-            zone = classify_completion_zone(
-                match.direction, d.price, bars[-1].close, atr
-            )
+            zone = classify_completion_zone(match.direction, d.price, bars[-1].close, atr)
             status = zone["status"]
             counts["zone_" + status] += 1
-            if status != "entry_zone":
-                continue
-            confirmed = (
-                bars[-1].close > bars[-1].open if match.direction == "long"
-                else bars[-1].close < bars[-1].open
-            )
-            if confirmed:
-                counts["zone_and_candle_confirmed"] += 1
-            else:
-                counts["zone_without_candle_confirmation"] += 1
+            if status == "entry_zone":
+                confirmed = (bars[-1].close > bars[-1].open if match.direction == "long"
+                             else bars[-1].close < bars[-1].open)
+                counts["zone_and_candle_confirmed" if confirmed else
+                       "zone_without_candle_confirmation"] += 1
+        # Parallel research comparison: the original snapshot diagnostic above
+        # is unchanged; the tracker retains patterns after later swing changes.
+        for event, _, _ in tracker.update(i, bars[-1], atr, detections):
+            counts["tracked_" + event] += 1
     counts["unique_ratio_patterns"] = len(unique)
     return dict(sorted(counts.items()))
 
@@ -82,7 +87,8 @@ def diagnose(rates, step=1, warmup=300):
 def main():
     parser = argparse.ArgumentParser(description="Read-only harmonic M5 diagnostics")
     parser.add_argument("--history-days", type=int, choices=(30, 90, 180, 365), default=180)
-    parser.add_argument("--step", type=int, choices=(1, 5, 20), default=1)
+    parser.add_argument("--step", type=int, choices=(1,), default=1,
+                        help="Tracker requires every completed M5 bar")
     parser.add_argument("--markets", nargs="+", choices=MARKETS, default=["EURUSD", "GBPUSD"])
     args = parser.parse_args()
     import MetaTrader5 as mt5
