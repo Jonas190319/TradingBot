@@ -25,77 +25,73 @@ HORIZONS = (48, 96, 144, 288)
 
 
 def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
-    """Use contiguous M5 segments; never bridge weekend/session gaps."""
+    """Detect across observed trading bars; never fill across market closures."""
     rows = sorted(rows, key=lambda r: int(r["time"]))
     times = [int(r["time"]) for r in rows]
-    if len(set(times)) != len(times):
-        raise ValueError("Duplicate timestamps")
+    if len(set(times)) != len(times) or any(b-a < 300 for a,b in zip(times,times[1:])):
+        raise ValueError("Duplicate or invalid M5 timestamps")
     totals = {h: Counter() for h in HORIZONS}
     outcomes = {h: [] for h in HORIZONS}
     by_pattern = {h: defaultdict(list) for h in HORIZONS}
-    segment_start = 0
-    for boundary in range(1, len(rows) + 1):
-        if boundary < len(rows) and times[boundary] - times[boundary - 1] == 300:
+    # Patterns span observed trading bars, including overnight/weekend closures.
+    # The simulator never fills across a closure and models gap-through-stop.
+    signals = {h: [] for h in HORIZONS}
+    labels = {h: {} for h in HORIZONS}
+    trackers = {h: HarmonicTracker(max_age_bars=h) for h in HORIZONS}
+    for i in range(300, len(rows) - 1):
+        if i < 60:
             continue
-        segment = rows[segment_start:boundary]
-        if len(segment) >= 350:
-            signals = {h: [] for h in HORIZONS}
-            labels = {h: {} for h in HORIZONS}
-            trackers = {h: HarmonicTracker(max_age_bars=h) for h in HORIZONS}
-            for i in range(300, len(segment) - 1):
-                if i < 60:
+        now = datetime.fromtimestamp(int(rows[i]["time"]) + 300, timezone.utc)
+        bars = bars_from_rates(rows[max(0, i - 599):i + 1], now, "utc")
+        tr = [max(b.high-b.low, abs(b.high-a.close), abs(b.low-a.close))
+              for a, b in zip(bars[-15:-1], bars[-14:])]
+        atr = sum(tr) / len(tr)
+        if atr <= 0:
+            continue
+        pivots = confirmed_pivots(bars)
+        detections = []
+        if len(pivots) >= 5:
+            last = pivots[-5:]
+            if len(bars) - 1 - last[-1][0] <= 8:
+                matches = detect_xabcd([p for _, p in last]) + detect_shark([p for _, p in last])
+                detections = [(symbol, m, [p for _, p in last]) for m in matches]
+        for h, tracker in trackers.items():
+            # Capture state before update: signal removes it from active.
+            previous = dict(tracker.active)
+            events = tracker.update(i, bars[-1], atr, detections)
+            for event, key, pattern in events:
+                totals[h][event] += 1
+                if event != "signal":
                     continue
-                now = datetime.fromtimestamp(int(segment[i]["time"]) + 300, timezone.utc)
-                bars = bars_from_rates(segment[max(0, i - 599):i + 1], now, "utc")
-                tr = [max(b.high-b.low, abs(b.high-a.close), abs(b.low-a.close))
-                      for a, b in zip(bars[-15:-1], bars[-14:])]
-                atr = sum(tr) / len(tr)
-                if atr <= 0:
-                    continue
-                pivots = confirmed_pivots(bars)
-                detections = []
-                if len(pivots) >= 5:
-                    last = pivots[-5:]
-                    if len(bars) - 1 - last[-1][0] <= 8:
-                        matches = detect_xabcd([p for _, p in last]) + detect_shark([p for _, p in last])
-                        detections = [(symbol, m, [p for _, p in last]) for m in matches]
-                for h, tracker in trackers.items():
-                    # Capture state before update: signal removes it from active.
-                    previous = dict(tracker.active)
-                    events = tracker.update(i, bars[-1], atr, detections)
-                    for event, key, pattern in events:
-                        totals[h][event] += 1
-                        if event != "signal":
-                            continue
-                        state = previous.get(key)
-                        if state is None:
-                            # A signal on discovery is also valid: find its D pivot.
-                            found = next(((m, ps) for sym, m, ps in detections
-                                          if pattern_id(sym, m, ps) == key), None)
-                            if found is None:
-                                totals[h]["missing_state"] += 1
-                                continue
-                            match, pattern_pivots = found
-                            d_price = pattern_pivots[-1].price
-                            side = match.direction
-                        else:
-                            d_price, side = state.d_price, state.direction
-                        reference_atr = state.reference_atr if state is not None else atr
-                        stop = d_price + (-1 if side == "long" else 1)*1.5*reference_atr
-                        signals[h].append({"bar_index": i, "side": side,
-                                           "stop": stop, "target_rr": 2.0})
-                        labels[h][i] = pattern
-            for h in HORIZONS:
-                result = simulate_signals(segment, signals[h], cost_ticks=cost_ticks,
-                                          tick_size=tick_size, max_hold=max_hold)
-                outcomes[h].extend(result)
-                for item in result:
-                    if item["outcome"] == "unresolved":
-                        reason = "segment_end" if item["exit_index"] >= len(segment)-1 else "max_hold"
-                        totals[h]["unresolved_" + reason] += 1
-                for item in result:
-                    by_pattern[h][labels[h][item["bar_index"]]].append(item)
-                totals[h]["candidate_signals"] += len(signals[h])
+                state = previous.get(key)
+                if state is None:
+                    # A signal on discovery is also valid: find its D pivot.
+                    found = next(((m, ps) for sym, m, ps in detections
+                                  if pattern_id(sym, m, ps) == key), None)
+                    if found is None:
+                        totals[h]["missing_state"] += 1
+                        continue
+                    match, pattern_pivots = found
+                    d_price = pattern_pivots[-1].price
+                    side = match.direction
+                else:
+                    d_price, side = state.d_price, state.direction
+                reference_atr = state.reference_atr if state is not None else atr
+                stop = d_price + (-1 if side == "long" else 1)*1.5*reference_atr
+                signals[h].append({"bar_index": i, "side": side,
+                                   "stop": stop, "target_rr": 2.0})
+                labels[h][i] = pattern
+    for h in HORIZONS:
+        result = simulate_signals(rows, signals[h], cost_ticks=cost_ticks,
+                                  tick_size=tick_size, max_hold=max_hold, allow_gaps=True)
+        outcomes[h].extend(result)
+        for item in result:
+            if item["outcome"] == "unresolved":
+                reason = "segment_end" if item["exit_index"] >= len(rows)-1 else "max_hold"
+                totals[h]["unresolved_" + reason] += 1
+        for item in result:
+            by_pattern[h][labels[h][item["bar_index"]]].append(item)
+        totals[h]["candidate_signals"] += len(signals[h])
         segment_start = boundary
     return totals, outcomes, by_pattern
 
@@ -146,6 +142,7 @@ def main():
                       f"ambiguous={sum(r['outcome']=='ambiguous' for r in results)} "
                       f"unresolved={sum(r['outcome']=='unresolved' for r in results)} "
                       f"invalid_fill={sum(r['outcome']=='invalid_at_fill' for r in results)} "
+                      f"no_fill_gap={sum(r['outcome']=='no_fill_gap' for r in results)} "
                       f"unresolved_max_hold={totals[h]['unresolved_max_hold']} "
                       f"unresolved_segment_end={totals[h]['unresolved_segment_end']} "
                       f"expired={totals[h]['expired']} invalidated={totals[h]['invalidated']}",
