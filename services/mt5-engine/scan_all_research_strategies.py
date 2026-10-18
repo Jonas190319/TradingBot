@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from research_strategy_registry import EXISTING, MARKETS, NEW, validate_inventory
+from research_signal_journal import records_from_scan
 from scan_vwap_profile_markets import scan_symbol
 from market_features import bars_from_rates, build_features
 from services.decision_engine.models import MarketSnapshot, Regime
@@ -44,7 +45,7 @@ def evaluate_existing(logical, rates, now, bid, ask):
     return results, regime.value
 
 
-def run(mt5, now, bars_count=900):
+def run(mt5, now, bars_count=900, journal_preview=False):
     from main import SYMBOL_ALIASES
     validate_inventory((s.name for s in CORE_STRATEGISTS), NEW, SYMBOL_ALIASES)
     print(f"Coverage: {len(EXISTING) + len(NEW)} strategies x {len(MARKETS)} markets = 128 checks; orders=0")
@@ -81,6 +82,15 @@ def run(mt5, now, bars_count=900):
                 profile_results = {s: [] for s in NEW}
                 print(f"{logical}: evaluated=13/16; profile={profile['status']}; "
                       f"regime_heuristic={regime}; candidates={sum(v is not None for v in existing.values())}; orders=0")
+            if journal_preview:
+                from json import dumps
+                # Latest completed M5 bar opening time is the stable observation key.
+                rows = records_from_scan(str(account.server), int(account.login), broker,
+                                         logical, latest, existing,
+                                         profile_signals if profile["status"] == "ok" else [])
+                print(f"  journal_preview={len(rows)}; persisted=0; orders=0")
+                for row in rows:
+                    print("  JOURNAL " + dumps(row, sort_keys=True, allow_nan=False))
             for strategy, result in existing.items():
                 if result is not None:
                     print(f"  {strategy}: {result['side']} entry={result['entry']} stop={result['stop']} target={result['target']}")
@@ -96,6 +106,7 @@ def run(mt5, now, bars_count=900):
 def main():
     parser = argparse.ArgumentParser(description="Read-only unified strategy research; no orders or database writes")
     parser.add_argument("--bars", type=int, default=900)
+    parser.add_argument("--journal-preview", action="store_true", help="Print deterministic journal records; no Supabase writes")
     args = parser.parse_args()
     if not 300 <= args.bars <= 3000:
         parser.error("--bars must be 300..3000")
@@ -103,7 +114,7 @@ def main():
     if not mt5.initialize():
         raise SystemExit("MT5 unavailable")
     try:
-        run(mt5, datetime.now(timezone.utc), args.bars)
+        run(mt5, datetime.now(timezone.utc), args.bars, args.journal_preview)
     finally:
         mt5.shutdown()
 
