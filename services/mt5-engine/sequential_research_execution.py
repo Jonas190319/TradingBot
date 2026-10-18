@@ -35,7 +35,8 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
         if times[i+1] - times[i] != 300:
             # No hypothetical fill across a closed-market interval.
             outcomes.append({"outcome":"no_fill_gap", "r":None,
-                             "bar_index":i, "exit_index":i})
+                             "bar_index":i, "exit_index":i,
+                             **({"signal_id":signal["signal_id"]} if "signal_id" in signal else {})})
             continue
         side = signal["side"]
         stop = float(signal["stop"])
@@ -56,7 +57,8 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
         if not ((side == "long" and stop < entry < target) or
                 (side == "short" and target < entry < stop)):
             outcomes.append({"outcome":"invalid_at_fill", "r":None,
-                             "bar_index":i, "exit_index":i+1})
+                             "bar_index":i, "exit_index":i+1,
+                             **({"signal_id":signal["signal_id"]} if "signal_id" in signal else {})})
             continue
         risk = abs(entry-stop)
         result = {"outcome":"unresolved", "r":None, "bar_index":i,
@@ -94,6 +96,8 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
                 raise ValueError("Invalid final close")
             result["mark_r"] = ((last_close-entry) if side=="long"
                                 else (entry-last_close))/risk
+        if "signal_id" in signal:
+            result["signal_id"] = signal["signal_id"]
         outcomes.append(result)
         busy_until = result["exit_index"]
     return outcomes
