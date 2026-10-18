@@ -78,9 +78,11 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                     d_price, side = state.d_price, state.direction
                 reference_atr = state.reference_atr if state is not None else atr
                 stop = d_price + (-1 if side == "long" else 1)*1.5*reference_atr
+                signal_id = f"{h}:{key}:{i}"
                 signals[h].append({"bar_index": i, "side": side,
-                                   "stop": stop, "target_rr": 2.0})
-                labels[h][i] = pattern
+                                   "stop": stop, "target_rr": 2.0,
+                                   "signal_id": signal_id})
+                labels[h][signal_id] = pattern
     for h in HORIZONS:
         result = simulate_signals(rows, signals[h], cost_ticks=cost_ticks,
                                   tick_size=tick_size, max_hold=max_hold, allow_gaps=True)
@@ -90,7 +92,7 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                 reason = "segment_end" if item["exit_index"] >= len(rows)-1 else "max_hold"
                 totals[h]["unresolved_" + reason] += 1
         for item in result:
-            by_pattern[h][labels[h][item["bar_index"]]].append(item)
+            by_pattern[h][labels[h][item["signal_id"]]].append(item)
         totals[h]["candidate_signals"] += len(signals[h])
     return totals, outcomes, by_pattern
 
