@@ -1,8 +1,9 @@
 """Historical, read-only M5 research across all 16 strategies and eight markets.
 
 Research assumptions: completed candles only, signal at candle close, hypothetical
-fill at that close, future OHLC used only for outcome. No spread/slippage/fees,
-broker fills, commissions, portfolio overlap or walk-forward validation.
+hypothetical fill at the next candle open, with a user-specified cost proxy.
+No actual broker fills, dynamic spread, commissions, portfolio overlap across
+strategies, or walk-forward validation.
 """
 import argparse
 from collections import defaultdict
@@ -14,7 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from scan_all_research_strategies import evaluate_existing
-from research_outcomes import evaluate_outcome, summarize_outcomes
+from research_outcomes import summarize_outcomes
+from sequential_research_execution import simulate_signals
 from research_strategy_registry import MARKETS, STRATEGIES
 from vwap_volume_profile import Bar, detect_signals, volume_profile
 
@@ -45,6 +47,14 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
             except ValueError:
                 pass
     outcomes = defaultdict(list)
+    signals_by_segment = defaultdict(list)
+    # Contiguous session ranges, so the execution model never crosses a gap.
+    segment_start = [0] * len(rows)
+    start = 0
+    for k in range(1, len(rows)):
+        if times[k] - times[k-1] != 300:
+            start = k
+        segment_start[k] = start
     observations = defaultdict(int)
     skipped_future_gaps = 0
     for i in range(warmup, len(rows)-lookahead, step):
@@ -83,23 +93,26 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
                         observations[name] += 1
                 except ValueError:
                     pass
-        future = rows[i+1:i+1+lookahead]
-        for name, c in candidates:
-            # Some strategists may return a quote-mid entry; this is only a proxy.
+        for name, candidate in candidates:
             try:
-                outcome = evaluate_outcome(c["side"], c["entry"], c["stop"],
-                                           c["target"], future, lookahead)
-                if outcome["r"] is not None:
-                    risk = abs(float(c["entry"]) - float(c["stop"]))
-                    outcome = dict(outcome, r=outcome["r"] - cost_ticks*tick_size/risk)
-                outcomes[name].append(outcome)
+                signals_by_segment[(name, segment_start[i])].append({
+                    "bar_index": i-segment_start[i], "side": candidate["side"],
+                    "stop": float(candidate["stop"]), "target": float(candidate["target"])})
             except (ValueError, TypeError, KeyError):
                 continue
+    for (name, start), signals in signals_by_segment.items():
+        end = start + 1
+        while end < len(rows) and times[end]-times[end-1] == 300:
+            end += 1
+        outcomes[name].extend(simulate_signals(rows[start:end], signals,
+                            cost_ticks=cost_ticks, tick_size=tick_size, max_hold=lookahead))
     report = {name: {"observations": observations[name],
                    **summarize_outcomes(outcomes[name])} for name in STRATEGIES}
     return report, {"first_utc": datetime.fromtimestamp(times[0], timezone.utc).isoformat(),
                     "last_utc": datetime.fromtimestamp(times[-1], timezone.utc).isoformat(),
-                    "skipped_future_gaps": skipped_future_gaps}
+                    "skipped_future_gaps": skipped_future_gaps,
+                    "execution": "next_open_one_position_per_strategy_market",
+                    "cost_ticks": cost_ticks}
 
 
 def main():
@@ -120,7 +133,8 @@ def main():
         account = mt5.account_info()
         if account is None or account.trade_mode != mt5.ACCOUNT_TRADE_MODE_DEMO:
             raise RuntimeError("Verified demo account required")
-        print(f"Historical research: 16 strategies x 8 markets; bars={args.bars}; step={args.step}; orders=0; uploads=0")
+        print(f"Historical research V2: 16 strategies x 8 markets; bars={args.bars}; "
+              f"step={args.step}; cost_ticks={args.cost_ticks}; orders=0; uploads=0")
         for logical in MARKETS:
             broker = next((x for x in SYMBOL_ALIASES[logical] if mt5.symbol_info(x) is not None), None)
             if broker is None:
