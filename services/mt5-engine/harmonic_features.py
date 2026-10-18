@@ -46,15 +46,16 @@ def harmonic_features(bars, atr):
     if len(bars) - 1 - d_index > 8:
         return empty
     close, candle = bars[-1].close, bars[-1]
-    if abs(close - d.price) > 1.5 * atr:
-        return empty
+    # A price outside the entry zone can be developing, not necessarily invalid.
     matches = detect_xabcd([p for _, p in last_five]) + detect_shark([p for _, p in last_five])
     output = []
     for match in matches:
         bullish = match.direction == 'long'
-        if (bullish and candle.close <= candle.open) or (not bullish and candle.close >= candle.open):
-            continue
+        zone = classify_completion_zone(match.direction, d.price, close, atr)
+        confirmed = ((bullish and candle.close > candle.open) or
+                     (not bullish and candle.close < candle.open))
         output.append({'pattern': match.pattern, 'direction': match.direction,
+                       'zone': zone, 'entry_confirmed': confirmed,
                        'pivot_price': d.price, 'pivot_ts': d.timestamp,
                        'confirmed_at': bars[d_index+3].ts.isoformat(),
                        'ratios': {k: getattr(match, k) for k in
