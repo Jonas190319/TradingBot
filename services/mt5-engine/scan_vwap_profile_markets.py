@@ -54,8 +54,12 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900, diagnose=False):
     previous_days = sorted(d for d in sessions if d < today)
     previous = previous_days[-1]
     # A short prior-day fragment can yield misleading levels: fail closed.
-    if len(sessions[previous]) < 100 or len(sessions[today]) < 2:
-        return {"symbol": logical, "status": "incomplete_sessions"}
+    # Empirical minimums from observed Pepperstone M5 trading windows.
+    # These are coverage guards, not exchange-session definitions.
+    minimum_prior_bars = 230 if logical == "GER40" else 270 if logical in {"XAUUSD", "NAS100", "US500", "US30"} else 280
+    if len(sessions[previous]) < minimum_prior_bars or len(sessions[today]) < 2:
+        return {"symbol": logical, "status": "incomplete_sessions",
+                "bars_prior": len(sessions[previous]), "required_prior": minimum_prior_bars}
     try:
         profile = volume_profile(sessions[previous], tick_size)
         tolerance = max(tick_size * 2, (max(b.high for b in sessions[today][-14:]) -
@@ -102,7 +106,7 @@ def main():
                 elif result["status"] == "ok":
                     print(f"{logical} ({broker}): prior={result['prior_day']} prior_bars={result['bars_prior']} today_bars={result['bars_today']} VAL={result['val']} POC={result['poc']} VAH={result['vah']} signals={result['signals']}")
                 else:
-                    print(f"{logical} ({broker}): {result['status']}" + (f" last_closed_utc={result['last_closed_utc']}" if result.get("last_closed_utc") else ""))
+                    print(f"{logical} ({broker}): {result['status']}" + (f" last_closed_utc={result['last_closed_utc']}" if result.get("last_closed_utc") else "") + (f" prior_bars={result['bars_prior']}/{result['required_prior']}" if "required_prior" in result else ""))
             except Exception as exc:
                 print(f"{logical}: scan error {type(exc).__name__}")
     finally:
