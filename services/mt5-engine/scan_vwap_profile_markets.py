@@ -22,21 +22,27 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900):
     if rates is None or len(rates) < 30:
         return {"symbol": logical, "status": "insufficient_history"}
     sessions = {}
+    latest_closed = None
     for rate in rates:
         ts = datetime.fromtimestamp(int(rate["time"]), timezone.utc)
         # Reject forming/future bars; MT5 copy_rates_from_pos(1) should already exclude current bar.
         if ts + timedelta(minutes=5) > now:
             continue
+        latest_closed = ts if latest_closed is None or ts > latest_closed else latest_closed
         day = ts.date()
         sessions.setdefault(day, []).append(Bar(float(rate["high"]), float(rate["low"]),
                                                    float(rate["close"]), float(rate["tick_volume"])))
+    # Do not emit weekend/stale signals from the last historical Friday bar.
+    if latest_closed is None or now - (latest_closed + timedelta(minutes=5)) > timedelta(minutes=20):
+        return {"symbol": logical, "status": "market_closed_or_stale",
+                "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
     if len(sessions) < 2:
         return {"symbol": logical, "status": "missing_prior_day"}
     today = max(sessions)
     previous_days = sorted(d for d in sessions if d < today)
     previous = previous_days[-1]
     # A short prior-day fragment can yield misleading levels: fail closed.
-    if len(sessions[previous]) < 24 or len(sessions[today]) < 2:
+    if len(sessions[previous]) < 100 or len(sessions[today]) < 2:
         return {"symbol": logical, "status": "incomplete_sessions"}
     try:
         profile = volume_profile(sessions[previous], tick_size)
