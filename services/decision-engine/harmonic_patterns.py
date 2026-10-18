@@ -29,7 +29,7 @@ class HarmonicMatch:
     tolerance: float
 
 
-# Approximate published Fibonacci zones. Validate empirically per market.
+# Explicit Fibonacci ratio intervals, not exact-point requirements.\n# Hypotheses for research; preserve original definitions until validated.
 RULES = {
     "gartley": {"ab_xa": (0.618, 0.618), "bc_ab": (0.382, 0.886), "cd_bc": (1.272, 1.618), "ad_xa": (0.786, 0.786)},
     "bat": {"ab_xa": (0.382, 0.500), "bc_ab": (0.382, 0.886), "cd_bc": (1.618, 2.618), "ad_xa": (0.886, 0.886)},
@@ -113,3 +113,35 @@ def detect_shark(pivots: Sequence[Pivot], tolerance: float = 0.05) -> list[Shark
         return []
     return [SharkMatch('shark', 'long' if pivots[-1].kind == 'low' else 'short',
                        *ratios, tolerance)]
+
+# Price-zone classification is separate from the completed-pivot detector.
+# D is a confirmed pivot, and a later close may remain within a bounded PRZ.
+# ATR tolerance is a research parameter, not an optimized profitability threshold.
+def classify_completion_zone(direction: str, pivot_price: float, close: float,
+                             atr: float, inner_atr: float = 0.75,
+                             invalidation_atr: float = 1.5) -> dict:
+    """Classify a confirmed D pivot against its permissible price range.
+
+    Bullish: lower prices beyond pivot-invalidation are invalid; bearish inverse.
+    A close near D is actionable research-zone; further favorable movement is
+    developing/away from zone, not automatically an invalidated pattern.
+    """
+    if direction not in ("long", "short"):
+        raise ValueError("Unknown direction")
+    values = (pivot_price, close, atr, inner_atr, invalidation_atr)
+    if any(not isfinite(float(v)) for v in values):
+        raise ValueError("Non-finite zone input")
+    if min(pivot_price, close, atr) <= 0 or inner_atr <= 0 or invalidation_atr <= inner_atr:
+        raise ValueError("Invalid zone geometry")
+    low = pivot_price - inner_atr*atr
+    high = pivot_price + inner_atr*atr
+    invalidation = pivot_price - invalidation_atr*atr if direction == "long" else pivot_price + invalidation_atr*atr
+    if (direction == "long" and close < invalidation) or (direction == "short" and close > invalidation):
+        status = "invalidated"
+    elif low <= close <= high:
+        status = "entry_zone"
+    else:
+        status = "developing"
+    return {"status": status, "entry_zone_low": low, "entry_zone_high": high,
+            "invalidation_price": invalidation, "inner_atr": inner_atr,
+            "invalidation_atr": invalidation_atr}
