@@ -168,6 +168,28 @@ def main():
                           f"marked_mean_R={sum(all_marked)/len(all_marked) if all_marked else 'n/a'} "
                           f"ambiguous={sum(x['outcome']=='ambiguous' for x in subset)}",
                           flush=True)
+            # Detailed per-pattern chronology; report every horizon without
+            # changing pattern ratios or selecting winners.
+            for h in HORIZONS:
+                for pattern, pattern_results in sorted(by_pattern[h].items()):
+                    for period, subset in (
+                        ("train", [x for x in pattern_results
+                                   if rows[x["bar_index"]]["time"] < cutoff]),
+                        ("holdout", [x for x in pattern_results
+                                     if rows[x["bar_index"]]["time"] >= cutoff]),
+                    ):
+                        if not subset:
+                            continue
+                        resolved = [x["r"] for x in subset if x["r"] is not None]
+                        marks = [x["mark_r"] for x in subset if x.get("mark_r") is not None]
+                        combined = resolved + marks
+                        print(f"    horizon={h} pattern={pattern} period={period} "
+                              f"fills={len(subset)} resolved={len(resolved)} "
+                              f"wins={sum(x>0 for x in resolved)} "
+                              f"mean_R={sum(resolved)/len(resolved) if resolved else 'n/a'} "
+                              f"marked_mean_R={sum(combined)/len(combined) if combined else 'n/a'} "
+                              f"ambiguous={sum(x['outcome']=='ambiguous' for x in subset)}",
+                              flush=True)
             for h in HORIZONS:
                 for pattern, pattern_results in sorted(by_pattern[h].items()):
                     resolved = [x["r"] for x in pattern_results if x["r"] is not None]
