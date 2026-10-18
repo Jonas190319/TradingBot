@@ -56,6 +56,7 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
             start = k
         segment_start[k] = start
     observations = defaultdict(int)
+    harmonic_diag = defaultdict(int)
     skipped_future_gaps = 0
     for i in range(warmup, len(rows)-lookahead, step):
         ts = datetime.fromtimestamp(times[i], timezone.utc)
@@ -75,6 +76,29 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
         except (ValueError, RuntimeError, KeyError, ZeroDivisionError):
             continue
         candidates = [(name, c) for name, c in existing.items() if c is not None]
+        # Diagnostic only: count which harmonic recognition stage eliminates setups.
+        try:
+            from market_features import bars_from_rates, harmonic_features
+            from harmonic_features import confirmed_pivots
+            from services.decision_engine.harmonic_patterns import detect_xabcd, detect_shark
+            from statistics import mean
+            hb = bars_from_rates(past, now, "utc")
+            hp = confirmed_pivots(hb)
+            harmonic_diag["evaluated"] += 1
+            if len(hp) >= 5:
+                harmonic_diag["five_pivots"] += 1
+                recent = hp[-5:]
+                if len(hb) - 1 - recent[-1][0] <= 8:
+                    harmonic_diag["fresh_pivot"] += 1
+                    matches = detect_xabcd([p for _, p in recent]) + detect_shark([p for _, p in recent])
+                    if matches:
+                        harmonic_diag["ratio_matches"] += 1
+                    for m in matches:
+                        harmonic_diag["match_" + m.pattern] += 1
+            # Reuse features already built in evaluate_existing only when a
+            # match is possible; diagnostics must never create candidates.
+        except (ValueError, RuntimeError, TypeError, ZeroDivisionError):
+            harmonic_diag["diagnostic_errors"] += 1
         for name in existing:
             observations[name] += 1
         profile = profiles.get(ts.date())
@@ -112,7 +136,7 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
                     "last_utc": datetime.fromtimestamp(times[-1], timezone.utc).isoformat(),
                     "skipped_future_gaps": skipped_future_gaps,
                     "execution": "next_open_one_position_per_strategy_market",
-                    "cost_ticks": cost_ticks}
+                    "cost_ticks": cost_ticks,\n                    "harmonic_diagnostic": dict(harmonic_diag)}
 
 
 def main():
