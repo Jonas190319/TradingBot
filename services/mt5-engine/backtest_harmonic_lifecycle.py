@@ -90,6 +90,10 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                                           tick_size=tick_size, max_hold=max_hold)
                 outcomes[h].extend(result)
                 for item in result:
+                    if item["outcome"] == "unresolved":
+                        reason = "segment_end" if item["exit_index"] >= len(segment)-1 else "max_hold"
+                        totals[h]["unresolved_" + reason] += 1
+                for item in result:
                     by_pattern[h][labels[h][item["bar_index"]]].append(item)
                 totals[h]["candidate_signals"] += len(signals[h])
         segment_start = boundary
@@ -142,6 +146,8 @@ def main():
                       f"ambiguous={sum(r['outcome']=='ambiguous' for r in results)} "
                       f"unresolved={sum(r['outcome']=='unresolved' for r in results)} "
                       f"invalid_fill={sum(r['outcome']=='invalid_at_fill' for r in results)} "
+                      f"unresolved_max_hold={totals[h]['unresolved_max_hold']} "
+                      f"unresolved_segment_end={totals[h]['unresolved_segment_end']} "
                       f"expired={totals[h]['expired']} invalidated={totals[h]['invalidated']}",
                       flush=True)
             for h in HORIZONS:
