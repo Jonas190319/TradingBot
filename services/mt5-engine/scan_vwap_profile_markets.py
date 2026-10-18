@@ -33,9 +33,6 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900, diagnose=False):
         sessions.setdefault(day, []).append(Bar(float(rate["high"]), float(rate["low"]),
                                                    float(rate["close"]), float(rate["tick_volume"])))
     # Do not emit weekend/stale signals from the last historical Friday bar.
-    if latest_closed is None or now - (latest_closed + timedelta(minutes=5)) > timedelta(minutes=20):
-        return {"symbol": logical, "status": "market_closed_or_stale",
-                "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
     if diagnose:
         day_rows = []
         for day in sorted(sessions)[-5:]:
@@ -47,6 +44,9 @@ def scan_symbol(mt5, logical, broker, now, bars_count=900, diagnose=False):
                                  "first_utc": min(timestamps).strftime("%H:%M"),
                                  "last_utc": max(timestamps).strftime("%H:%M")})
         return {"symbol": logical, "status": "diagnostic", "days": day_rows,
+                "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
+    if latest_closed is None or now - (latest_closed + timedelta(minutes=5)) > timedelta(minutes=20):
+        return {"symbol": logical, "status": "market_closed_or_stale",
                 "last_closed_utc": latest_closed.isoformat() if latest_closed else None}
     if len(sessions) < 2:
         return {"symbol": logical, "status": "missing_prior_day"}
