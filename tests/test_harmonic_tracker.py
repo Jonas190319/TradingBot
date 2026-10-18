@@ -2,11 +2,14 @@
 import importlib.util
 from pathlib import Path
 from types import SimpleNamespace
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 MODULE = Path(__file__).resolve().parents[1] / "services" / "mt5-engine" / "harmonic_tracker.py"
 spec = importlib.util.spec_from_file_location("harmonic_tracker", MODULE)
 tracker_module = importlib.util.module_from_spec(spec)
-import sys
 sys.modules[spec.name] = tracker_module
 spec.loader.exec_module(tracker_module)
 HarmonicTracker = tracker_module.HarmonicTracker
