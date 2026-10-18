@@ -182,8 +182,7 @@ def main():
             try:
                 result, quality = research_market(logical, rates, tick_size, args.lookahead,
                                                   step=args.step, cost_ticks=args.cost_ticks)
-                print(f"
-{logical} ({broker}): bars_received={len(rates)} {quality}")
+                print(f"\n{logical} ({broker}): bars_received={len(rates)} {quality}")
                 for strategy, summary in result.items():
                     rate = f"{summary['win_rate']:.1%}" if summary["win_rate"] is not None else "n/a"
                     mean_r = f"{summary['mean_r']:.2f}" if summary["mean_r"] is not None else "n/a"
