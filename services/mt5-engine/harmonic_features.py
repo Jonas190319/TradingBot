@@ -6,7 +6,7 @@ near D and reject stale detections. No broker orders or probability claims.
 """
 from __future__ import annotations
 
-from services.decision_engine.harmonic_patterns import Pivot, detect_xabcd, detect_shark
+from services.decision_engine.harmonic_patterns import (Pivot, detect_xabcd, detect_shark,\n                                                        classify_completion_zone)
 
 
 def confirmed_pivots(bars, left=3, right=3):
