@@ -92,7 +92,6 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
         for item in result:
             by_pattern[h][labels[h][item["bar_index"]]].append(item)
         totals[h]["candidate_signals"] += len(signals[h])
-        segment_start = boundary
     return totals, outcomes, by_pattern
 
 
