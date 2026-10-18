@@ -21,7 +21,7 @@ def test_unresolved_marked_separately():
 
 
 def test_resolved_has_no_mark():
-    rows=[{"time":300*i,"open":100,"high":105,"low":99,"close":101} for i in range(3)]
+    rows=[{"time":300*i,"open":100,"high":105,"low":100,"close":101} for i in range(3)]
     result=simulate_signals(rows,[{"bar_index":0,"side":"long","stop":99,
                                   "target_rr":2}],max_hold=2)
     assert result[0]["outcome"]=="target",result
