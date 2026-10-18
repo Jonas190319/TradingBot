@@ -19,9 +19,9 @@ from research_strategy_registry import MARKETS, STRATEGIES
 from vwap_volume_profile import Bar, detect_signals, volume_profile
 
 
-def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5):
+def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5, cost_ticks=0):
     """Pure historical research. Rates must be chronological, completed M5 candles."""
-    if not 1 <= lookahead <= 288 or not 60 <= warmup or not 1 <= step:
+    if not 1 <= lookahead <= 288 or not 60 <= warmup or not 1 <= step or cost_ticks < 0:
         raise ValueError("Invalid research window")
     rows = sorted(rates, key=lambda r: int(r["time"]))
     times = [int(r["time"]) for r in rows]
@@ -46,10 +46,15 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5)
                 pass
     outcomes = defaultdict(list)
     observations = defaultdict(int)
+    skipped_future_gaps = 0
     for i in range(warmup, len(rows)-lookahead, step):
         ts = datetime.fromtimestamp(times[i], timezone.utc)
         # Do not evaluate across a stale session boundary; latest 60 bars must be contiguous.
         if any(times[j+1]-times[j] != 300 for j in range(i-59, i)):
+            continue
+        # Skip windows with missing bars or session/weekend gaps in the outcome period.
+        if any(times[j+1] - times[j] != 300 for j in range(i, i+lookahead)):
+            skipped_future_gaps += 1
             continue
         now = ts + timedelta(minutes=5)
         past = rows[max(0, i-599):i+1]
@@ -82,12 +87,19 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5)
         for name, c in candidates:
             # Some strategists may return a quote-mid entry; this is only a proxy.
             try:
-                outcomes[name].append(evaluate_outcome(c["side"], c["entry"], c["stop"],
-                                                      c["target"], future, lookahead))
+                outcome = evaluate_outcome(c["side"], c["entry"], c["stop"],
+                                           c["target"], future, lookahead)
+                if outcome["r"] is not None:
+                    risk = abs(float(c["entry"]) - float(c["stop"]))
+                    outcome = dict(outcome, r=outcome["r"] - cost_ticks*tick_size/risk)
+                outcomes[name].append(outcome)
             except (ValueError, TypeError, KeyError):
                 continue
-    return {name: {"observations": observations[name],
+    report = {name: {"observations": observations[name],
                    **summarize_outcomes(outcomes[name])} for name in STRATEGIES}
+    return report, {"first_utc": datetime.fromtimestamp(times[0], timezone.utc).isoformat(),
+                    "last_utc": datetime.fromtimestamp(times[-1], timezone.utc).isoformat(),
+                    "skipped_future_gaps": skipped_future_gaps}
 
 
 def main():
@@ -95,8 +107,10 @@ def main():
     p.add_argument("--bars", type=int, default=1600)
     p.add_argument("--lookahead", type=int, default=48)
     p.add_argument("--step", type=int, default=5)
+    p.add_argument("--cost-ticks", type=float, default=0,
+                   help="Assumed round-trip cost in tick-size units; not measured broker spread")
     args = p.parse_args()
-    if not 1000 <= args.bars <= 5000 or not 1 <= args.lookahead <= 288 or not 1 <= args.step <= 100:
+    if not 1000 <= args.bars <= 5000 or not 1 <= args.lookahead <= 288 or not 1 <= args.step <= 100 or not 0 <= args.cost_ticks <= 1000:
         p.error("Invalid bars/lookahead/step")
     import MetaTrader5 as mt5
     from main import SYMBOL_ALIASES
@@ -119,8 +133,9 @@ def main():
             info = mt5.symbol_info(broker)
             tick_size = float(getattr(info, "trade_tick_size", 0) or getattr(info, "point", 0) or 0)
             try:
-                result = research_market(logical, rates, tick_size, args.lookahead, step=args.step)
-                print(f"\n{logical} ({broker}):")
+                result, quality = research_market(logical, rates, tick_size, args.lookahead,
+                                                  step=args.step, cost_ticks=args.cost_ticks)
+                print(f"\n{logical} ({broker}): {quality}")
                 for strategy, summary in result.items():
                     rate = f"{summary['win_rate']:.1%}" if summary["win_rate"] is not None else "n/a"
                     mean_r = f"{summary['mean_r']:.2f}" if summary["mean_r"] is not None else "n/a"
