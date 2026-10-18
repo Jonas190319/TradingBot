@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
 from harmonic_features import confirmed_pivots
-from harmonic_tracker import HarmonicTracker
+from harmonic_tracker import HarmonicTracker, pattern_id
 from market_features import bars_from_rates
 from research_strategy_registry import MARKETS
 from sequential_research_execution import simulate_signals
@@ -68,13 +68,13 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                         state = previous.get(key)
                         if state is None:
                             # A signal on discovery is also valid: find its D pivot.
-                            match = next((m for _, m, ps in detections
-                                          if m.pattern == pattern and
-                                          m.direction in ("long", "short")), None)
-                            if match is None:
+                            found = next(((m, ps) for sym, m, ps in detections
+                                          if pattern_id(sym, m, ps) == key), None)
+                            if found is None:
                                 totals[h]["missing_state"] += 1
                                 continue
-                            d_price = detections[0][2][-1].price
+                            match, pattern_pivots = found
+                            d_price = pattern_pivots[-1].price
                             side = match.direction
                         else:
                             d_price, side = state.d_price, state.direction
