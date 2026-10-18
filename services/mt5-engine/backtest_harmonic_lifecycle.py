@@ -101,8 +101,10 @@ def main():
     parser.add_argument("--markets", nargs="+", choices=MARKETS, default=["EURUSD", "GBPUSD"])
     parser.add_argument("--cost-ticks", type=float, default=2)
     parser.add_argument("--max-hold", type=int, default=48)
+    parser.add_argument("--test-fraction", type=float, default=0.30,
+                        help="Chronological holdout fraction; no model tuning performed")
     args = parser.parse_args()
-    if args.cost_ticks < 0 or args.max_hold < 1:
+    if args.cost_ticks < 0 or args.max_hold < 1 or not 0 < args.test_fraction < 1:
         parser.error("Invalid execution assumptions")
     import MetaTrader5 as mt5
     from main import SYMBOL_ALIASES
@@ -130,6 +132,10 @@ def main():
             print(symbol, "bars", len(rows), flush=True)
             totals, outcomes, by_pattern = evaluate(rows, symbol, float(info.point),
                                         cost_ticks=args.cost_ticks, max_hold=args.max_hold)
+            cutoff = rows[int(len(rows)*(1-args.test_fraction))]["time"]
+            print(f"  holdout_start_utc={datetime.fromtimestamp(int(cutoff), timezone.utc).isoformat()} "
+                  f"train_fraction={1-args.test_fraction:.2f} test_fraction={args.test_fraction:.2f}",
+                  flush=True)
             for h in HORIZONS:
                 results = outcomes[h]
                 resolved = [r["r"] for r in results if r["r"] is not None]
@@ -146,6 +152,22 @@ def main():
                       f"unresolved_segment_end={totals[h]['unresolved_segment_end']} "
                       f"expired={totals[h]['expired']} invalidated={totals[h]['invalidated']}",
                       flush=True)
+            for h in HORIZONS:
+                for label, subset in (
+                    ("train", [x for x in outcomes[h] if rows[x["bar_index"]]["time"] < cutoff]),
+                    ("holdout", [x for x in outcomes[h] if rows[x["bar_index"]]["time"] >= cutoff]),
+                ):
+                    resolved = [x["r"] for x in subset if x["r"] is not None]
+                    marks = [x.get("mark_r") for x in subset if x["outcome"] == "unresolved"]
+                    marks = [v for v in marks if v is not None]
+                    all_marked = resolved + marks
+                    print(f"    horizon={h} period={label} resolved={len(resolved)} "
+                          f"wins={sum(x > 0 for x in resolved)} "
+                          f"resolved_mean_R={sum(resolved)/len(resolved) if resolved else 'n/a'} "
+                          f"unresolved_marked={len(marks)} "
+                          f"marked_mean_R={sum(all_marked)/len(all_marked) if all_marked else 'n/a'} "
+                          f"ambiguous={sum(x['outcome']=='ambiguous' for x in subset)}",
+                          flush=True)
             for h in HORIZONS:
                 for pattern, pattern_results in sorted(by_pattern[h].items()):
                     resolved = [x["r"] for x in pattern_results if x["r"] is not None]
