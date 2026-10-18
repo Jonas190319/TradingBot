@@ -136,7 +136,8 @@ def research_market(logical, rates, tick_size, lookahead=48, warmup=300, step=5,
                     "last_utc": datetime.fromtimestamp(times[-1], timezone.utc).isoformat(),
                     "skipped_future_gaps": skipped_future_gaps,
                     "execution": "next_open_one_position_per_strategy_market",
-                    "cost_ticks": cost_ticks,\n                    "harmonic_diagnostic": dict(harmonic_diag)}
+                    "cost_ticks": cost_ticks,
+                    "harmonic_diagnostic": dict(harmonic_diag)}
 
 
 def main():
@@ -181,7 +182,8 @@ def main():
             try:
                 result, quality = research_market(logical, rates, tick_size, args.lookahead,
                                                   step=args.step, cost_ticks=args.cost_ticks)
-                print(f"\n{logical} ({broker}): bars_received={len(rates)} {quality}")
+                print(f"
+{logical} ({broker}): bars_received={len(rates)} {quality}")
                 for strategy, summary in result.items():
                     rate = f"{summary['win_rate']:.1%}" if summary["win_rate"] is not None else "n/a"
                     mean_r = f"{summary['mean_r']:.2f}" if summary["mean_r"] is not None else "n/a"
