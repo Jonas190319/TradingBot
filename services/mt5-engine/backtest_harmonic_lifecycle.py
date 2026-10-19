@@ -24,7 +24,7 @@ from services.decision_engine.harmonic_patterns import detect_shark, detect_xabc
 HORIZONS = (48, 96, 144, 288)
 
 
-def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
+def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48, cost_model="legacy"):
     """Detect across observed trading bars; never fill across market closures."""
     rows = sorted(rows, key=lambda r: int(r["time"]))
     times = [int(r["time"]) for r in rows]
@@ -85,7 +85,8 @@ def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48):
                 labels[h][signal_id] = pattern
     for h in HORIZONS:
         result = simulate_signals(rows, signals[h], cost_ticks=cost_ticks,
-                                  tick_size=tick_size, max_hold=max_hold, allow_gaps=True)
+                                  tick_size=tick_size, max_hold=max_hold, allow_gaps=True,
+                                  cost_model=cost_model)
         outcomes[h].extend(result)
         for item in result:
             if item["outcome"] == "unresolved":
@@ -102,11 +103,13 @@ def main():
     parser.add_argument("--history-days", type=int, choices=(30, 90, 180, 365), default=180)
     parser.add_argument("--markets", nargs="+", choices=MARKETS, default=["EURUSD", "GBPUSD"])
     parser.add_argument("--cost-ticks", type=float, default=2)
+    parser.add_argument("--cost-grid", type=float, nargs="+", default=None,
+                        help="Fixed-target costs on one downloaded M5 snapshot")
     parser.add_argument("--max-hold", type=int, default=48)
     parser.add_argument("--test-fraction", type=float, default=0.30,
                         help="Chronological holdout fraction; no model tuning performed")
     args = parser.parse_args()
-    if args.cost_ticks < 0 or args.max_hold < 1 or not 0 < args.test_fraction < 1:
+    if args.cost_ticks < 0 or (args.cost_grid is not None and any(not 0 <= c < float("inf") for c in args.cost_grid)) or args.max_hold < 1 or not 0 < args.test_fraction < 1:
         parser.error("Invalid execution assumptions")
     import MetaTrader5 as mt5
     from main import SYMBOL_ALIASES
@@ -132,6 +135,32 @@ def main():
                 continue
             rows = [r for r in rates if int(r["time"]) + 300 <= end.timestamp()]
             print(symbol, "bars", len(rows), flush=True)
+            if args.cost_grid is not None:
+                print(f"  fixed_data_bars={len(rows)} point={float(info.point)} "
+                      f"trade_tick_size={float(info.trade_tick_size)} "
+                      f"snapshot_spread_points={int(info.spread)} "
+                      "costs_are_assumptions_not_historical_spreads", flush=True)
+                cutoff_grid = int(rows[int(len(rows)*(1-args.test_fraction))]["time"])
+                for cost in args.cost_grid:
+                    grid_totals, grid_outcomes, _ = evaluate(
+                        rows, symbol, float(info.point), cost_ticks=cost,
+                        max_hold=args.max_hold, cost_model="fixed_rr")
+                    for h in HORIZONS:
+                        for period, subset in (
+                            ("train", [x for x in grid_outcomes[h] if int(rows[x["bar_index"]]["time"]) < cutoff_grid]),
+                            ("holdout", [x for x in grid_outcomes[h] if int(rows[x["bar_index"]]["time"]) >= cutoff_grid]),
+                        ):
+                            resolved = [x["r"] for x in subset if x["r"] is not None]
+                            marks = [x["mark_r"] for x in subset if x.get("mark_r") is not None]
+                            values = resolved + marks
+                            print(f"    cost_points={cost:g} horizon={h} period={period} "
+                                  f"candidates={grid_totals[h]['candidate_signals']} "
+                                  f"resolved={len(resolved)} wins={sum(x>0 for x in resolved)} "
+                                  f"mean_R={sum(resolved)/len(resolved) if resolved else 'n/a'} "
+                                  f"unresolved={len(marks)} "
+                                  f"marked_mean_R={sum(values)/len(values) if values else 'n/a'}",
+                                  flush=True)
+                continue
             totals, outcomes, by_pattern = evaluate(rows, symbol, float(info.point),
                                         cost_ticks=args.cost_ticks, max_hold=args.max_hold)
             cutoff = rows[int(len(rows)*(1-args.test_fraction))]["time"]
