@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from math import isfinite
 
 
-def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, allow_gaps=False):
+def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, allow_gaps=False, cost_model="legacy"):
     """Return sequential outcomes for candidate dicts with bar_index, side, stop, target.
 
     OHLC execution proxy: next bar open, with unfavorable entry slippage of
@@ -19,6 +19,8 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
     unresolved; overlapping signals are skipped. Signals on same candle are
     processed in input order; caller should separate each strategy/market.
     """
+    if cost_model not in ("legacy", "fixed_rr"):
+        raise ValueError("Invalid cost model")
     if not isinstance(max_hold, int) or max_hold < 1:
         raise ValueError("Invalid max_hold")
     if not all(isfinite(float(v)) and float(v) >= 0 for v in (cost_ticks, tick_size)):
@@ -47,20 +49,24 @@ def simulate_signals(rows, signals, cost_ticks=0.0, tick_size=0.0, max_hold=48, 
             raise ValueError("Invalid side")
         if not all(isfinite(x) and x > 0 for x in (entry, stop)) or (target is not None and (not isfinite(target) or target <= 0)):
             raise ValueError("Invalid prices")
+        gross_entry = entry
         # No favorable repricing: charge full round-trip cost to entry.
         entry += (1 if side == "long" else -1)*cost_ticks*tick_size
         if rr is not None:
             rr = float(rr)
             if not isfinite(rr) or rr <= 0:
                 raise ValueError("Invalid target_rr")
-            target = entry + (1 if side == "long" else -1)*rr*abs(entry-stop)
+            reference_entry = gross_entry if cost_model == "fixed_rr" else entry
+            target = reference_entry + (1 if side == "long" else -1)*rr*abs(reference_entry-stop)
         if not ((side == "long" and stop < entry < target) or
                 (side == "short" and target < entry < stop)):
             outcomes.append({"outcome":"invalid_at_fill", "r":None,
                              "bar_index":i, "exit_index":i+1,
                              **({"signal_id":signal["signal_id"]} if "signal_id" in signal else {})})
             continue
-        risk = abs(entry-stop)
+        risk = abs((gross_entry if cost_model == "fixed_rr" else entry)-stop)
+        if risk <= 0:
+            raise ValueError("Invalid gross risk")
         result = {"outcome":"unresolved", "r":None, "bar_index":i,
                   "entry":entry, "exit_index":min(len(rows)-1,i+max_hold)}
         end = min(len(rows), i+1+max_hold)
