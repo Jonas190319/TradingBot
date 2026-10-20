@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import importlib.util
 import sys
-BASE=Path(__file__).resolve().parents[1]
+BASE=Path(__file__).resolve().parents[1] / "services" / "mt5-engine"
 def load(name):
     spec=importlib.util.spec_from_file_location(name,BASE/(name+".py"))
     mod=importlib.util.module_from_spec(spec)
