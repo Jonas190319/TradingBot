@@ -11,6 +11,16 @@ MARKETS = (
     "XAUUSD", "XAGUSD", "USOIL", "UKOIL",
 )
 
+BROKER_SYMBOL_ALIASES = {"USOIL": "SpotCrude", "UKOIL": "SpotBrent"}
+
+
+def broker_symbol(logical_symbol):
+    """Resolve known Pepperstone symbols; verify each with MT5 before use."""
+    if logical_symbol not in MARKETS:
+        raise ValueError(f"Unknown research market: {logical_symbol}")
+    return BROKER_SYMBOL_ALIASES.get(logical_symbol, logical_symbol)
+
+
 STRATEGIES = (
     "ema_pullback_rsi",
     "volume_profile_value_area_reversal",
