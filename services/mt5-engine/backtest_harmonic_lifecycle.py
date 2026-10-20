@@ -24,6 +24,27 @@ from services.decision_engine.harmonic_patterns import detect_shark, detect_xabc
 HORIZONS = (48, 96, 144, 288)
 
 
+def load_m5_history_chunked(mt5, broker, start, end, chunk_days=30):
+    """Fetch long ranges in smaller read-only requests, without inventing bars."""
+    if chunk_days < 1 or end <= start:
+        raise ValueError("Invalid history interval")
+    by_time = {}
+    cursor = start
+    while cursor < end:
+        stop = min(cursor + timedelta(days=chunk_days), end)
+        rates = mt5.copy_rates_range(broker, mt5.TIMEFRAME_M5, cursor, stop)
+        if rates is None:
+            raise RuntimeError(
+                f"MT5 history request failed for {broker} "
+                f"{cursor.isoformat()}..{stop.isoformat()}: {mt5.last_error()}")
+        for rate in rates:
+            stamp = int(rate["time"])
+            if start.timestamp() <= stamp <= end.timestamp():
+                by_time[stamp] = rate
+        cursor = stop
+    return [by_time[t] for t in sorted(by_time)]
+
+
 def evaluate(rows, symbol, tick_size, cost_ticks=2.0, max_hold=48, cost_model="legacy"):
     """Detect across observed trading bars; never fill across market closures."""
     rows = sorted(rows, key=lambda r: int(r["time"]))
@@ -129,9 +150,13 @@ def main():
                 print(symbol, "unavailable", flush=True)
                 continue
             info = mt5.symbol_info(broker)
-            rates = mt5.copy_rates_range(broker, mt5.TIMEFRAME_M5, start, end)
-            if rates is None or len(rates) < 350:
-                print(symbol, "insufficient history", flush=True)
+            try:
+                rates = load_m5_history_chunked(mt5, broker, start, end)
+            except RuntimeError as exc:
+                print(symbol, "history error:", exc, flush=True)
+                continue
+            if len(rates) < 350:
+                print(symbol, f"insufficient history: {len(rates)} bars", flush=True)
                 continue
             rows = [r for r in rates if int(r["time"]) + 300 <= end.timestamp()]
             print(symbol, "bars", len(rows), flush=True)
