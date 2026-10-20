@@ -167,7 +167,7 @@ def main():
                       "costs_are_assumptions_not_historical_spreads", flush=True)
                 cutoff_grid = int(rows[int(len(rows)*(1-args.test_fraction))]["time"])
                 for cost in args.cost_grid:
-                    grid_totals, grid_outcomes, _ = evaluate(
+                    grid_totals, grid_outcomes, grid_by_pattern = evaluate(
                         rows, symbol, float(info.point), cost_ticks=cost,
                         max_hold=args.max_hold, cost_model="fixed_rr")
                     for h in HORIZONS:
@@ -181,6 +181,29 @@ def main():
                             print(f"    cost_points={cost:g} horizon={h} period={period} "
                                   f"candidates={grid_totals[h]['candidate_signals']} "
                                   f"resolved={len(resolved)} wins={sum(x>0 for x in resolved)} "
+                                  f"mean_R={sum(resolved)/len(resolved) if resolved else 'n/a'} "
+                                  f"unresolved={len(marks)} "
+                                  f"marked_mean_R={sum(values)/len(values) if values else 'n/a'}",
+                                  flush=True)
+                # Per-pattern attribution uses the same evaluated signals and fills;
+                # these are descriptive diagnostics, not optimized selections.
+                for h in HORIZONS:
+                    for pattern, pattern_results in sorted(grid_by_pattern[h].items()):
+                        for period, subset in (
+                            ("train", [x for x in pattern_results
+                                       if int(rows[x["bar_index"]]["time"]) < cutoff_grid]),
+                            ("holdout", [x for x in pattern_results
+                                         if int(rows[x["bar_index"]]["time"]) >= cutoff_grid]),
+                        ):
+                            if not subset:
+                                continue
+                            resolved = [x["r"] for x in subset if x["r"] is not None]
+                            marks = [x["mark_r"] for x in subset if x.get("mark_r") is not None]
+                            values = resolved + marks
+                            print(f"      pattern={pattern} cost_points={cost:g} horizon={h} "
+                                  f"period={period} signals={len(subset)} "
+                                  f"resolved={len(resolved)} wins={sum(x > 0 for x in resolved)} "
+                                  f"win_rate={sum(x > 0 for x in resolved)/len(resolved) if resolved else 'n/a'} "
                                   f"mean_R={sum(resolved)/len(resolved) if resolved else 'n/a'} "
                                   f"unresolved={len(marks)} "
                                   f"marked_mean_R={sum(values)/len(values) if values else 'n/a'}",
