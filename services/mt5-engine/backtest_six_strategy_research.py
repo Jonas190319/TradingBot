@@ -15,6 +15,7 @@ from six_strategy_signal_engine import scan
 from candlestick_pattern_tracker import latest_pattern_features
 from ema_geometry_features import ema_geometry
 from six_strategy_signal_engine import ema, atr
+from historical_session_context import build_prior_profiles, opening_ranges, range_for_bar
 
 def load_bars(symbol, count):
     if not mt5.symbol_select(symbol, True):
@@ -60,11 +61,16 @@ def run(symbols, bars_count, step, horizon):
         print(f"{logical:8} -> {actual:12} {len(history):6} M5 bars",flush=True)
         if len(history)<300:
             continue
-        # No profile/opening range passed: those strategies are intentionally
-        # NOT tested until a causally correct session builder is integrated.
+        info=mt5.symbol_info(actual)
+        tick_size=float(info.trade_tick_size or info.point) if info else 0
+        profiles=build_prior_profiles(history,tick_size) if tick_size>0 else {}
+        ranges,session,zone,start=opening_ranges(history,logical)
         for i in range(205,len(history)-horizon,step):
             window=history[:i+1]
-            signals=scan(window)
+            day=datetime.fromtimestamp(history[i]['time'],timezone.utc).date()
+            prior_profile=profiles.get(day)
+            opening_range=range_for_bar(history[i],ranges,session,zone,start)
+            signals=scan(window,prior_profile=prior_profile,opening_range=opening_range)
             if not signals:
                 continue
             closes=[b["close"] for b in window]
@@ -113,6 +119,8 @@ def main():
         writer.writeheader()
         writer.writerows(rows)
     print(f"Saved {len(rows)} candidate signals to {dest}")
-    print("WARNING: M5 OHLC-only, no spreads/news; volume profile and ORB not evaluated.")
+    print("WARNING: M5 OHLC-only; no spreads, slippage, news, or portfolio limits.")
+    print("Profile = previous UTC calendar day approximate tick-volume; ORB = London/NY local 15-min window.")
+    print("Signal close used as hypothetical fill; results NOT executable or performance proof.")
 if __name__=="__main__":
     main()
